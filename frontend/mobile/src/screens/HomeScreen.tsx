@@ -16,7 +16,7 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { useAlerts } from '../contexts/AlertContext';
 import { apiService } from '../services/api.service';
-import { healthService } from '../services/health.service';
+import { healthService } from '../services/health.service.APPLEHEALTH';
 import type { DashboardData } from '../../../shared/types';
 import { RISK_LEVEL_COLORS, RISK_LEVEL_LABELS } from '../../../shared/constants';
 
@@ -26,16 +26,38 @@ const HomeScreen = () => {
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [healthKitEnabled, setHealthKitEnabled] = useState(false);
+  const [healthMetrics, setHealthMetrics] = useState<{
+    heartRate: number | null;
+    hrv: number | null;
+    glucose: number | null;
+    bloodPressure: { systolic: number; diastolic: number } | null;
+  } | null>(null);
 
   useEffect(() => {
     loadDashboardData();
-    // Disable HealthKit for now to avoid errors in Expo Go
-    // initializeHealthKit();
+    initializeHealthKit();
   }, []);
 
   const initializeHealthKit = async () => {
     const enabled = await healthService.initialize();
     setHealthKitEnabled(enabled);
+    if (enabled) {
+      await loadHealthData();
+    }
+  };
+
+  const loadHealthData = async () => {
+    try {
+      const metrics = await healthService.getAllHealthMetrics();
+      setHealthMetrics({
+        heartRate: metrics.heartRate,
+        hrv: metrics.hrv,
+        glucose: metrics.glucose,
+        bloodPressure: metrics.bloodPressure,
+      });
+    } catch (error) {
+      console.error('Error loading health data:', error);
+    }
   };
 
   const loadDashboardData = async () => {
@@ -56,7 +78,10 @@ const HomeScreen = () => {
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    await loadDashboardData();
+    await Promise.all([
+      loadDashboardData(),
+      healthKitEnabled ? loadHealthData() : Promise.resolve(),
+    ]);
     setIsRefreshing(false);
   };
 
@@ -74,11 +99,11 @@ const HomeScreen = () => {
               await acknowledgeAlert(alertId);
               await handleRefresh();
               
-              // HealthKit disabled for Expo Go - will work in production builds
-              // if (healthKitEnabled && user) {
-              //   const vitals = await healthService.getVitalSnapshot(user.id);
-              //   await apiService.submitVitals(user.id, vitals);
-              // }
+              // Submit vitals if HealthKit is enabled
+              if (healthKitEnabled && user) {
+                const vitals = await healthService.getVitalSnapshot(user.id);
+                await apiService.submitVitals(user.id, vitals);
+              }
             } catch (error) {
               Alert.alert('Error', 'Failed to acknowledge alert');
             }
@@ -189,18 +214,73 @@ const HomeScreen = () => {
         )}
       </View>
 
-      {/* Health Integration */}
+      {/* Health Data from Apple Watch */}
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Health Data</Text>
-        <View style={styles.deviceRow}>
-          <Text style={styles.deviceLabel}>HealthKit:</Text>
-          <Text style={styles.deviceValue}>
-            ⏸️ Disabled in Expo Go
-          </Text>
-        </View>
-        <Text style={styles.noData}>
-          HealthKit requires a development build or physical device with standalone app
-        </Text>
+        <Text style={styles.cardTitle}>💓 Health Data</Text>
+        
+        {!healthKitEnabled ? (
+          <View>
+            <Text style={styles.noData}>
+              HealthKit not available. Build with `npx expo run:ios` on a physical device to enable.
+            </Text>
+            <TouchableOpacity
+              style={styles.enableHealthButton}
+              onPress={initializeHealthKit}
+            >
+              <Text style={styles.enableHealthButtonText}>Enable HealthKit</Text>
+            </TouchableOpacity>
+          </View>
+        ) : !healthMetrics ? (
+          <Text style={styles.noData}>Loading health data...</Text>
+        ) : (
+          <View>
+            <View style={styles.healthGrid}>
+              {/* Heart Rate */}
+              <View style={styles.healthItem}>
+                <Text style={styles.healthLabel}>Heart Rate</Text>
+                <Text style={styles.healthValue}>
+                  {healthMetrics.heartRate || '--'}
+                </Text>
+                <Text style={styles.healthUnit}>bpm</Text>
+              </View>
+
+              {/* HRV */}
+              <View style={styles.healthItem}>
+                <Text style={styles.healthLabel}>HRV</Text>
+                <Text style={styles.healthValue}>
+                  {healthMetrics.hrv || '--'}
+                </Text>
+                <Text style={styles.healthUnit}>ms</Text>
+              </View>
+            </View>
+
+            <View style={styles.healthGrid}>
+              {/* Blood Glucose */}
+              <View style={styles.healthItem}>
+                <Text style={styles.healthLabel}>Glucose</Text>
+                <Text style={styles.healthValue}>
+                  {healthMetrics.glucose || '--'}
+                </Text>
+                <Text style={styles.healthUnit}>mg/dL</Text>
+              </View>
+
+              {/* Blood Pressure */}
+              <View style={styles.healthItem}>
+                <Text style={styles.healthLabel}>Blood Pressure</Text>
+                <Text style={styles.healthValue}>
+                  {healthMetrics.bloodPressure
+                    ? `${healthMetrics.bloodPressure.systolic}/${healthMetrics.bloodPressure.diastolic}`
+                    : '--'}
+                </Text>
+                <Text style={styles.healthUnit}>mmHg</Text>
+              </View>
+            </View>
+
+            <Text style={styles.healthNote}>
+              📱 Data from Apple Watch & Health app • Pull down to refresh
+            </Text>
+          </View>
+        )}
       </View>
     </ScrollView>
   );
@@ -347,6 +427,53 @@ const styles = StyleSheet.create({
     color: '#EF4444',
     fontSize: 14,
     fontWeight: '500',
+  },
+  enableHealthButton: {
+    backgroundColor: '#EF4444',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  enableHealthButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  healthGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  healthItem: {
+    flex: 1,
+    alignItems: 'center',
+    padding: 12,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 8,
+    marginHorizontal: 4,
+  },
+  healthLabel: {
+    fontSize: 11,
+    color: '#6B7280',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  healthValue: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#EF4444',
+    marginBottom: 2,
+  },
+  healthUnit: {
+    fontSize: 11,
+    color: '#9CA3AF',
+  },
+  healthNote: {
+    fontSize: 12,
+    color: '#6B7280',
+    textAlign: 'center',
+    fontStyle: 'italic',
   },
 });
 
