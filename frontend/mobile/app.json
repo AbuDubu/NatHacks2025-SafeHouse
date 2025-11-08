@@ -14,7 +14,14 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.safehouse.mobile"
+      "bundleIdentifier": "com.safehouse.mobile",
+      "infoPlist": {
+        "NSHealthShareUsageDescription": "SafeHouse needs access to your health data to monitor your wellbeing during heat alerts and track vital signs.",
+        "NSHealthUpdateUsageDescription": "SafeHouse needs to save health data to track your wellness over time."
+      },
+      "entitlements": {
+        "com.apple.developer.healthkit": true
+      }
     },
     "android": {
       "package": "com.safehouse.mobile"
