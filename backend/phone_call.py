@@ -14,6 +14,10 @@ app = FastAPI()
 
 NGROK_URL = os.getenv("NGROK_URL", "").rstrip("/")
 
+# Initialize Twilio client at module level
+account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+client = Client(account_sid, auth_token) if account_sid and auth_token else None
 @app.get("/voice")
 @app.post("/voice")
 def voice():
@@ -26,6 +30,14 @@ def voice():
   <Say>No input received. Goodbye.</Say>
   <Hangup/>
 </Response>''',
+        media_type="application/xml"
+    )
+
+@app.get("/emergency")
+@app.post("/emergency")
+def emergency():
+    return Response(
+        content='<Response><Say voice="alice">This is an emergency call from SafeHouse. The user has triggered an emergency alert. Please check on them immediately.</Say><Hangup/></Response>',
         media_type="application/xml"
     )
 
@@ -46,10 +58,29 @@ async def gather(request: Request):
             media_type="application/xml"
         )
     else:
+        # Make emergency call in background thread
+        def make_emergency_call():
+            if client:
+                try:
+                    emergency_call = client.calls.create(
+                        url=f"{NGROK_URL}/emergency",
+                        to=os.getenv("ABUS_NUMBER"),
+                        from_=os.getenv("TWILIO_PHONE_NUMBER")
+                    )
+                    print(f"Emergency call initiated: {emergency_call.sid}")
+                except Exception as e:
+                    print(f"Error calling emergency number: {e}")
+        
+        # Start emergency call in background
+        threading.Thread(target=make_emergency_call, daemon=True).start()
+        
+        # Return hangup response immediately
         return Response(
-            content='<Response><Say voice="alice">Invalid input. Goodbye.</Say><Hangup/></Response>',
+            content='<Response><Say voice="alice">Emergency noted calling emergency number. Goodbye.</Say><Hangup/></Response>',
             media_type="application/xml"
         )
+        
+
 
 if __name__ == "__main__":
     if not NGROK_URL:
@@ -62,9 +93,9 @@ if __name__ == "__main__":
     time.sleep(2)
     
     # Make the call
-    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
-    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
-    client = Client(account_sid, auth_token)
+    if not client:
+        print("ERROR: Twilio credentials not set!")
+        exit(1)
     
     call = client.calls.create(
       url=f"{NGROK_URL}/voice",
