@@ -35,16 +35,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const loadUser = async () => {
     try {
-      const token = await AsyncStorage.getItem('authToken');
-      if (token) {
-        const response = await apiService.getUserProfile();
-        if (response.success && response.data) {
-          setUser(response.data);
-        }
-      }
+      // Auto-login with mock elder user for testing
+      const mockUser: User = {
+        id: 'mock-elder-123',
+        phone: '+1234567890',
+        name: 'Test Elder',
+        role: 'elder',
+        createdAt: new Date(),
+      };
+      
+      setUser(mockUser);
+      await AsyncStorage.setItem('authToken', 'mock-token-123');
     } catch (error) {
       console.error('Error loading user:', error);
-      await AsyncStorage.removeItem('authToken');
     } finally {
       setIsLoading(false);
     }
