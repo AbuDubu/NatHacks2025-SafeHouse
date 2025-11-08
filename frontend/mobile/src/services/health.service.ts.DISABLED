@@ -1,0 +1,181 @@
+/**
+ * Health Data Service for HealthKit integration
+ * Note: This uses react-native-health library
+ * For iOS, you'll need to add HealthKit entitlements
+ */
+
+import AppleHealthKit, {
+  HealthValue,
+  HealthKitPermissions,
+} from 'react-native-health';
+import { Platform } from 'react-native';
+import type { VitalSnapshot } from '../../../shared/types';
+
+const permissions: HealthKitPermissions = {
+  permissions: {
+    read: [
+      AppleHealthKit.Constants.Permissions.HeartRate,
+      AppleHealthKit.Constants.Permissions.HeartRateVariability,
+      AppleHealthKit.Constants.Permissions.Steps,
+      AppleHealthKit.Constants.Permissions.ActivitySummary,
+    ],
+    write: [],
+  },
+};
+
+export class HealthService {
+  private initialized = false;
+
+  /**
+   * Initialize HealthKit
+   */
+  async initialize(): Promise<boolean> {
+    if (Platform.OS !== 'ios') {
+      console.warn('HealthKit is only available on iOS');
+      return false;
+    }
+
+    return new Promise((resolve) => {
+      AppleHealthKit.initHealthKit(permissions, (error: string) => {
+        if (error) {
+          console.error('Error initializing HealthKit:', error);
+          resolve(false);
+        } else {
+          this.initialized = true;
+          resolve(true);
+        }
+      });
+    });
+  }
+
+  /**
+   * Check if HealthKit is available and authorized
+   */
+  isAvailable(): boolean {
+    return Platform.OS === 'ios' && this.initialized;
+  }
+
+  /**
+   * Get recent heart rate (last 5 minutes)
+   */
+  async getRecentHeartRate(): Promise<number | null> {
+    if (!this.initialized) return null;
+
+    return new Promise((resolve) => {
+      const options = {
+        startDate: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+        endDate: new Date().toISOString(),
+        limit: 10,
+      };
+
+      AppleHealthKit.getHeartRateSamples(
+        options,
+        (err: Object, results: HealthValue[]) => {
+          if (err) {
+            console.error('Error fetching heart rate:', err);
+            resolve(null);
+            return;
+          }
+
+          if (results && results.length > 0) {
+            // Get average of recent samples
+            const avg = results.reduce((sum, r) => sum + r.value, 0) / results.length;
+            resolve(Math.round(avg));
+          } else {
+            resolve(null);
+          }
+        }
+      );
+    });
+  }
+
+  /**
+   * Get heart rate variability
+   */
+  async getHeartRateVariability(): Promise<number | null> {
+    if (!this.initialized) return null;
+
+    return new Promise((resolve) => {
+      const options = {
+        startDate: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+        endDate: new Date().toISOString(),
+      };
+
+      AppleHealthKit.getHeartRateVariabilitySamples(
+        options,
+        (err: Object, results: HealthValue[]) => {
+          if (err) {
+            console.error('Error fetching HRV:', err);
+            resolve(null);
+            return;
+          }
+
+          if (results && results.length > 0) {
+            resolve(results[results.length - 1].value);
+          } else {
+            resolve(null);
+          }
+        }
+      );
+    });
+  }
+
+  /**
+   * Get steps in last 5 minutes
+   */
+  async getRecentSteps(): Promise<number | null> {
+    if (!this.initialized) return null;
+
+    return new Promise((resolve) => {
+      const options = {
+        startDate: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+        endDate: new Date().toISOString(),
+      };
+
+      AppleHealthKit.getStepCount(options, (err: Object, results: HealthValue) => {
+        if (err) {
+          console.error('Error fetching steps:', err);
+          resolve(null);
+          return;
+        }
+
+        resolve(results?.value || 0);
+      });
+    });
+  }
+
+  /**
+   * Get comprehensive vital snapshot for last 5 minutes
+   */
+  async getVitalSnapshot(elderId: string): Promise<Partial<VitalSnapshot>> {
+    const [heartRate, hrv, steps] = await Promise.all([
+      this.getRecentHeartRate(),
+      this.getHeartRateVariability(),
+      this.getRecentSteps(),
+    ]);
+
+    const now = new Date();
+    const hasData = heartRate !== null || hrv !== null || steps !== null;
+    
+    return {
+      elderId,
+      timestamp: now,
+      heartRate: heartRate || undefined,
+      heartRateVariability: hrv || undefined,
+      steps5min: steps || undefined,
+      fallDetected: false, // TODO: Implement fall detection check
+      stalenessSec: hasData ? 0 : 300,
+      status: hasData ? 'fresh' : 'unavailable',
+    };
+  }
+
+  /**
+   * Request authorization for HealthKit
+   */
+  async requestAuthorization(): Promise<boolean> {
+    return this.initialize();
+  }
+}
+
+export const healthService = new HealthService();
+
