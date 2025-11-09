@@ -1,16 +1,19 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { GuardianTrends } from './GuardianTrends';
+import { HouseTemperatureTab } from './HouseTemperatureTab';
+import { apiClient, User, DashboardData, Alert, SensorReading, Sensor } from '../lib/api';
 
 interface GuardianDashboardProps {
   onEmergency: (context?: { residentName?: string; alertType?: string }) => void;
+  onLogout?: () => void;
 }
 
 interface Resident {
-  id: string;
+  id: number;
   name: string;
-  age: number;
+  age?: number;
   photo: string;
   status: 'normal' | 'warning' | 'alert';
   vitals: {
@@ -19,38 +22,110 @@ interface Resident {
     sleep: number;
     activity: number;
   };
+  dashboardData?: DashboardData;
 }
 
-export function GuardianDashboard({ onEmergency }: GuardianDashboardProps) {
+export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardProps) {
   const [activeTab, setActiveTab] = useState('home');
   const [searchQuery, setSearchQuery] = useState('');
+  const [residents, setResidents] = useState<Resident[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [criticalAlert, setCriticalAlert] = useState<Alert | null>(null);
 
-  const residents: Resident[] = [
-    {
-      id: '1',
-      name: 'Margaret Chen',
-      age: 78,
-      photo: 'MC',
-      status: 'warning',
-      vitals: { heartRate: 72, glucose: 68, sleep: 7.5, activity: 5432 },
-    },
-    {
-      id: '2',
-      name: 'Robert Williams',
-      age: 82,
-      photo: 'RW',
-      status: 'normal',
-      vitals: { heartRate: 68, glucose: 95, sleep: 8.0, activity: 3200 },
-    },
-    {
-      id: '3',
-      name: 'Helen Martinez',
-      age: 75,
-      photo: 'HM',
-      status: 'alert',
-      vitals: { heartRate: 95, glucose: 180, sleep: 4.2, activity: 850 },
-    },
-  ];
+  useEffect(() => {
+    loadResidents();
+    // Refresh every 30 seconds
+    const interval = setInterval(loadResidents, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const loadResidents = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      // Get all users
+      const users = await apiClient.getUsers();
+      const primaryUsers = users.filter(u => u.is_primary);
+      
+      // Load dashboard data for each resident
+      const residentsData: Resident[] = await Promise.all(
+        primaryUsers.map(async (user) => {
+          try {
+            const dashboardData = await apiClient.getDashboard(user.id);
+            const activeAlerts = dashboardData.active_alerts || [];
+            const criticalAlerts = activeAlerts.filter(a => a.alert_level === 'critical');
+            const warningAlerts = activeAlerts.filter(a => a.alert_level === 'warning');
+            
+            // Determine status
+            let status: 'normal' | 'warning' | 'alert' = 'normal';
+            if (criticalAlerts.length > 0) {
+              status = 'alert';
+            } else if (warningAlerts.length > 0) {
+              status = 'warning';
+            }
+            
+            // Extract vitals from readings
+            const readings = dashboardData.recent_readings || [];
+            const heartRate = getLatestReading(readings, 'heart_rate') || 0;
+            const glucose = getLatestReading(readings, 'glucose') || 0;
+            
+            // Set critical alert if found
+            if (criticalAlerts.length > 0 && !criticalAlert) {
+              setCriticalAlert(criticalAlerts[0]);
+            }
+            
+            return {
+              id: user.id,
+              name: user.name,
+              age: undefined, // Age not in user model
+              photo: user.name.substring(0, 2).toUpperCase(),
+              status,
+              vitals: {
+                heartRate: Math.round(heartRate),
+                glucose: Math.round(glucose),
+                sleep: 7.5, // Placeholder
+                activity: 5432, // Placeholder
+              },
+              dashboardData,
+            };
+          } catch (err) {
+            console.error(`Error loading dashboard for user ${user.id}:`, err);
+            return {
+              id: user.id,
+              name: user.name,
+              age: undefined,
+              photo: user.name.substring(0, 2).toUpperCase(),
+              status: 'normal' as const,
+              vitals: {
+                heartRate: 0,
+                glucose: 0,
+                sleep: 0,
+                activity: 0,
+              },
+            };
+          }
+        })
+      );
+      
+      setResidents(residentsData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load residents');
+      console.error('Error loading residents:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getLatestReading = (readings: SensorReading[], sensorType: string): number | null => {
+    const filtered = readings.filter(r => r.sensor?.sensor_type === sensorType);
+    if (filtered.length === 0) return null;
+    const sorted = filtered.sort((a, b) => 
+      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+    return sorted[0].value;
+  };
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -82,6 +157,27 @@ export function GuardianDashboard({ onEmergency }: GuardianDashboardProps) {
     resident.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  if (loading && residents.length === 0) {
+    return (
+      <View style={[styles.container, styles.centerContent]}>
+        <ActivityIndicator size="large" color="#2563eb" />
+        <Text style={styles.loadingText}>Loading residents...</Text>
+      </View>
+    );
+  }
+
+  if (error && residents.length === 0) {
+    return (
+      <View style={[styles.container, styles.centerContent]}>
+        <Ionicons name="alert-circle" size={48} color="#dc2626" />
+        <Text style={styles.errorText}>{error}</Text>
+        <TouchableOpacity onPress={loadResidents} style={styles.retryButton}>
+          <Text style={styles.retryButtonText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       {activeTab === 'home' && (
@@ -104,88 +200,112 @@ export function GuardianDashboard({ onEmergency }: GuardianDashboardProps) {
           </View>
 
           {/* Emergency Alert Banner */}
-          <View style={styles.emergencyBanner}>
-            <Ionicons name="alert-circle" size={24} color="#dc2626" />
-            <View style={styles.emergencyContent}>
-              <Text style={styles.emergencyTitle}>Emergency Alert</Text>
-              <Text style={styles.emergencyText}>
-                Helen Martinez did not respond. Emergency services contacted.
-              </Text>
-              <View style={styles.emergencyButtons}>
-                <TouchableOpacity
-                  onPress={() => onEmergency({ residentName: 'Helen Martinez', alertType: 'no-response' })}
-                  style={styles.emergencyButton}
-                >
-                  <Text style={styles.emergencyButtonText}>View Details</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.callButton}>
-                  <Ionicons name="call" size={16} color="#dc2626" />
-                  <Text style={styles.callButtonText}>Call Now</Text>
-                </TouchableOpacity>
+          {criticalAlert && (
+            <View style={styles.emergencyBanner}>
+              <Ionicons name="alert-circle" size={24} color="#dc2626" />
+              <View style={styles.emergencyContent}>
+                <Text style={styles.emergencyTitle}>Emergency Alert</Text>
+                <Text style={styles.emergencyText}>
+                  {criticalAlert.title}: {criticalAlert.message}
+                </Text>
+                <View style={styles.emergencyButtons}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      const resident = residents.find(r => r.dashboardData?.user.id === criticalAlert.user_id);
+                      onEmergency({ 
+                        residentName: resident?.name || 'Resident', 
+                        alertType: criticalAlert.alert_level 
+                      });
+                    }}
+                    style={styles.emergencyButton}
+                  >
+                    <Text style={styles.emergencyButtonText}>View Details</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.callButton}>
+                    <Ionicons name="call" size={16} color="#dc2626" />
+                    <Text style={styles.callButtonText}>Call Now</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             </View>
-          </View>
+          )}
 
           {/* Residents List */}
           <View style={styles.residentsList}>
-            {filteredResidents.map((resident) => {
-              const statusColors = getStatusColor(resident.status);
-              return (
-                <View key={resident.id} style={styles.residentCard}>
-                  <View style={styles.residentHeader}>
-                    <View style={styles.avatar}>
-                      <Ionicons name="person" size={32} color="#2563eb" />
-                    </View>
-                    <View style={styles.residentInfo}>
-                      <View style={styles.residentNameRow}>
-                        <View>
-                          <Text style={styles.residentName}>{resident.name}</Text>
-                          <Text style={styles.residentAge}>Age {resident.age}</Text>
-                        </View>
-                        <View style={[styles.statusBadge, {
-                          backgroundColor: statusColors.bg,
-                          borderColor: statusColors.border,
-                        }]}>
-                          <Text style={[styles.statusText, { color: statusColors.text }]}>
-                            {getStatusText(resident.status)}
-                          </Text>
+            {filteredResidents.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyStateText}>No residents found</Text>
+              </View>
+            ) : (
+              filteredResidents.map((resident) => {
+                const statusColors = getStatusColor(resident.status);
+                return (
+                  <View key={resident.id} style={styles.residentCard}>
+                    <View style={styles.residentHeader}>
+                      <View style={styles.avatar}>
+                        <Ionicons name="person" size={32} color="#2563eb" />
+                      </View>
+                      <View style={styles.residentInfo}>
+                        <View style={styles.residentNameRow}>
+                          <View>
+                            <Text style={styles.residentName}>{resident.name}</Text>
+                            {resident.age && (
+                              <Text style={styles.residentAge}>Age {resident.age}</Text>
+                            )}
+                          </View>
+                          <View style={[styles.statusBadge, {
+                            backgroundColor: statusColors.bg,
+                            borderColor: statusColors.border,
+                          }]}>
+                            <Text style={[styles.statusText, { color: statusColors.text }]}>
+                              {getStatusText(resident.status)}
+                            </Text>
+                          </View>
                         </View>
                       </View>
                     </View>
-                  </View>
 
-                  {/* Vitals Grid */}
-                  <View style={styles.vitalsGrid}>
-                    <View style={styles.vitalItem}>
-                      <Text style={styles.vitalLabel}>Heart Rate</Text>
-                      <Text style={styles.vitalValue}>{resident.vitals.heartRate} bpm</Text>
+                    {/* Vitals Grid */}
+                    <View style={styles.vitalsGrid}>
+                      <View style={styles.vitalItem}>
+                        <Text style={styles.vitalLabel}>Heart Rate</Text>
+                        <Text style={styles.vitalValue}>
+                          {resident.vitals.heartRate > 0 ? `${resident.vitals.heartRate} bpm` : '--'}
+                        </Text>
+                      </View>
+                      <View style={styles.vitalItem}>
+                        <Text style={styles.vitalLabel}>Glucose</Text>
+                        <Text style={styles.vitalValue}>
+                          {resident.vitals.glucose > 0 ? `${resident.vitals.glucose} mg/dL` : '--'}
+                        </Text>
+                      </View>
+                      <View style={styles.vitalItem}>
+                        <Text style={styles.vitalLabel}>Sleep</Text>
+                        <Text style={styles.vitalValue}>{resident.vitals.sleep}h</Text>
+                      </View>
+                      <View style={styles.vitalItem}>
+                        <Text style={styles.vitalLabel}>Activity</Text>
+                        <Text style={styles.vitalValue}>{resident.vitals.activity} steps</Text>
+                      </View>
                     </View>
-                    <View style={styles.vitalItem}>
-                      <Text style={styles.vitalLabel}>Glucose</Text>
-                      <Text style={styles.vitalValue}>{resident.vitals.glucose} mg/dL</Text>
-                    </View>
-                    <View style={styles.vitalItem}>
-                      <Text style={styles.vitalLabel}>Sleep</Text>
-                      <Text style={styles.vitalValue}>{resident.vitals.sleep}h</Text>
-                    </View>
-                    <View style={styles.vitalItem}>
-                      <Text style={styles.vitalLabel}>Activity</Text>
-                      <Text style={styles.vitalValue}>{resident.vitals.activity} steps</Text>
-                    </View>
-                  </View>
 
-                  {/* Action Button */}
-                  <TouchableOpacity style={styles.checkInButton}>
-                    <Text style={styles.checkInButtonText}>Check In</Text>
-                  </TouchableOpacity>
-                </View>
-              );
-            })}
+                    {/* Action Button */}
+                    <TouchableOpacity style={styles.checkInButton}>
+                      <Text style={styles.checkInButtonText}>Check In</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })
+            )}
           </View>
         </ScrollView>
       )}
 
       {activeTab === 'trends' && <GuardianTrends />}
+
+      {activeTab === 'temperature' && (
+        <HouseTemperatureTab />
+      )}
 
       {activeTab === 'messages' && (
         <View style={styles.emptyState}>
@@ -195,10 +315,81 @@ export function GuardianDashboard({ onEmergency }: GuardianDashboardProps) {
       )}
 
       {activeTab === 'settings' && (
-        <View style={styles.emptyState}>
-          <Ionicons name="settings" size={64} color="#d1d5db" />
-          <Text style={styles.emptyStateText}>Settings coming soon</Text>
-        </View>
+        <ScrollView contentContainerStyle={styles.settingsContent}>
+          <View style={styles.settingsHeader}>
+            <Text style={styles.settingsTitle}>Settings</Text>
+          </View>
+          
+          <View style={styles.settingsSection}>
+            <Text style={styles.sectionTitle}>Account</Text>
+            
+            <TouchableOpacity style={styles.settingsItem}>
+              <View style={styles.settingsItemLeft}>
+                <Ionicons name="person" size={24} color="#6b7280" />
+                <Text style={styles.settingsItemText}>Profile</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#9ca3af" />
+            </TouchableOpacity>
+            
+            <TouchableOpacity style={styles.settingsItem}>
+              <View style={styles.settingsItemLeft}>
+                <Ionicons name="notifications" size={24} color="#6b7280" />
+                <Text style={styles.settingsItemText}>Notifications</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#9ca3af" />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.settingsSection}>
+            <Text style={styles.sectionTitle}>Preferences</Text>
+            
+            <TouchableOpacity style={styles.settingsItem}>
+              <View style={styles.settingsItemLeft}>
+                <Ionicons name="language" size={24} color="#6b7280" />
+                <Text style={styles.settingsItemText}>Language</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#9ca3af" />
+            </TouchableOpacity>
+            
+            <TouchableOpacity style={styles.settingsItem}>
+              <View style={styles.settingsItemLeft}>
+                <Ionicons name="moon" size={24} color="#6b7280" />
+                <Text style={styles.settingsItemText}>Dark Mode</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#9ca3af" />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.settingsSection}>
+            <Text style={styles.sectionTitle}>About</Text>
+            
+            <TouchableOpacity style={styles.settingsItem}>
+              <View style={styles.settingsItemLeft}>
+                <Ionicons name="help-circle" size={24} color="#6b7280" />
+                <Text style={styles.settingsItemText}>Help & Support</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#9ca3af" />
+            </TouchableOpacity>
+            
+            <TouchableOpacity style={styles.settingsItem}>
+              <View style={styles.settingsItemLeft}>
+                <Ionicons name="document-text" size={24} color="#6b7280" />
+                <Text style={styles.settingsItemText}>Terms & Privacy</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#9ca3af" />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.logoutSection}>
+            <TouchableOpacity 
+              style={styles.logoutButton}
+              onPress={onLogout}
+            >
+              <Ionicons name="log-out" size={24} color="#ffffff" />
+              <Text style={styles.logoutButtonText}>Log Out</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
       )}
 
       {/* Bottom Navigation */}
@@ -225,6 +416,13 @@ export function GuardianDashboard({ onEmergency }: GuardianDashboardProps) {
           <Text style={[styles.navLabel, activeTab === 'messages' && styles.navLabelActive]}>Messages</Text>
         </TouchableOpacity>
         <TouchableOpacity
+          onPress={() => setActiveTab('temperature')}
+          style={[styles.navItem, activeTab === 'temperature' && styles.navItemActive]}
+        >
+          <Ionicons name="thermometer" size={24} color={activeTab === 'temperature' ? '#2563eb' : '#6b7280'} />
+          <Text style={[styles.navLabel, activeTab === 'temperature' && styles.navLabelActive]}>Temperature</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
           onPress={() => setActiveTab('settings')}
           style={[styles.navItem, activeTab === 'settings' && styles.navItemActive]}
         >
@@ -240,6 +438,33 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f9fafb',
+  },
+  centerContent: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 16,
+  },
+  loadingText: {
+    fontSize: 16,
+    color: '#6b7280',
+    marginTop: 16,
+  },
+  errorText: {
+    fontSize: 16,
+    color: '#dc2626',
+    textAlign: 'center',
+    marginTop: 16,
+  },
+  retryButton: {
+    marginTop: 16,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    backgroundColor: '#2563eb',
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: '#ffffff',
+    fontWeight: '600',
   },
   scrollContent: {
     padding: 24,
@@ -456,5 +681,68 @@ const styles = StyleSheet.create({
   },
   navLabelActive: {
     color: '#2563eb',
+  },
+  settingsContent: {
+    padding: 24,
+    paddingBottom: 100,
+  },
+  settingsHeader: {
+    marginBottom: 32,
+  },
+  settingsTitle: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#111827',
+  },
+  settingsSection: {
+    marginBottom: 32,
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#6b7280',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 12,
+  },
+  settingsItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  settingsItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  settingsItemText: {
+    fontSize: 16,
+    color: '#111827',
+  },
+  logoutSection: {
+    marginTop: 24,
+    marginBottom: 24,
+  },
+  logoutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    backgroundColor: '#dc2626',
+    borderRadius: 12,
+    gap: 12,
+  },
+  logoutButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#ffffff',
   },
 });

@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { SafeAreaView, StyleSheet } from 'react-native';
 import { LandingScreen } from './components/LandingScreen';
 import { ConnectionScreen } from './components/ConnectionScreen';
 import { ResidentDashboard } from './components/ResidentDashboard';
 import { GuardianDashboard } from './components/GuardianDashboard';
 import { EmergencyFlow } from './components/EmergencyFlow';
+import { apiClient } from './lib/api';
 
 type Screen = 'landing' | 'connection' | 'resident' | 'guardian' | 'emergency';
 type UserMode = 'guardian' | 'resident' | null;
@@ -17,6 +18,21 @@ export default function App() {
     residentName?: string;
     alertType?: string;
   }>({});
+
+  useEffect(() => {
+    // Try to load primary user name on app start
+    loadPrimaryUserName();
+  }, []);
+
+  const loadPrimaryUserName = async () => {
+    try {
+      const user = await apiClient.getPrimaryUser();
+      setResidentName(user.name);
+    } catch (err) {
+      console.error('Error loading primary user:', err);
+      // Keep default name if API fails
+    }
+  };
 
   const handleModeSelect = (mode: UserMode) => {
     setUserMode(mode);
@@ -48,6 +64,15 @@ export default function App() {
     }
   };
 
+  const handleLogout = () => {
+    // Reset all state and go back to landing screen
+    setUserMode(null);
+    setCurrentScreen('landing');
+    setEmergencyContext({});
+    // Reset resident name to default (will be reloaded if needed)
+    setResidentName('Margaret');
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       {currentScreen === 'landing' && (
@@ -67,10 +92,11 @@ export default function App() {
         <ResidentDashboard
           name={residentName}
           onEmergency={handleEmergency}
+          onLogout={handleLogout}
         />
       )}
       {currentScreen === 'guardian' && (
-        <GuardianDashboard onEmergency={handleEmergency} />
+        <GuardianDashboard onEmergency={handleEmergency} onLogout={handleLogout} />
       )}
       {currentScreen === 'emergency' && (
         <EmergencyFlow
@@ -88,4 +114,3 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
 });
-

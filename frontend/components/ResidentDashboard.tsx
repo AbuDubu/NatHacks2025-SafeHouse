@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { apiClient, DashboardData, SensorReading, Alert } from '../lib/api';
 
 interface ResidentDashboardProps {
   name: string;
   onEmergency: () => void;
+  onLogout?: () => void;
 }
 
 interface VitalCard {
@@ -16,14 +18,65 @@ interface VitalCard {
   color: string;
 }
 
-export function ResidentDashboard({ name, onEmergency }: ResidentDashboardProps) {
-  const [notification, setNotification] = useState({
-    show: true,
-    message: 'Your blood glucose is low — please eat fast-acting carbs.',
+export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashboardProps) {
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [notification, setNotification] = useState<{
+    show: boolean;
+    message: string;
+    confirmed: boolean;
+    alertId?: number;
+  }>({
+    show: false,
+    message: '',
     confirmed: false,
   });
 
-  const handleConfirm = () => {
+  useEffect(() => {
+    loadDashboardData();
+    // Refresh every 30 seconds
+    const interval = setInterval(loadDashboardData, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const loadDashboardData = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await apiClient.getDashboard();
+      setDashboardData(data);
+      
+      // Show most recent critical/warning alert as notification
+      const activeAlerts = data.active_alerts || [];
+      const criticalAlert = activeAlerts.find(a => a.alert_level === 'critical');
+      const warningAlert = activeAlerts.find(a => a.alert_level === 'warning');
+      const alertToShow = criticalAlert || warningAlert;
+      
+      if (alertToShow && !notification.confirmed) {
+        setNotification({
+          show: true,
+          message: alertToShow.message,
+          confirmed: false,
+          alertId: alertToShow.id,
+        });
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load dashboard data');
+      console.error('Error loading dashboard:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleConfirm = async () => {
+    if (notification.alertId) {
+      try {
+        await apiClient.resolveAlert(notification.alertId);
+      } catch (err) {
+        console.error('Error resolving alert:', err);
+      }
+    }
     setNotification({ ...notification, confirmed: true });
     setTimeout(() => {
       setNotification({ ...notification, show: false });
@@ -37,40 +90,85 @@ export function ResidentDashboard({ name, onEmergency }: ResidentDashboardProps)
     return 'Good Evening';
   };
 
-  const vitals: VitalCard[] = [
-    {
-      icon: 'heart-outline',
-      label: 'Heart Rate',
-      value: '72',
-      unit: 'bpm',
-      status: 'normal',
-      color: 'green',
-    },
-    {
-      icon: 'water-outline',
-      label: 'Blood Glucose',
-      value: '68',
-      unit: 'mg/dL',
-      status: 'warning',
-      color: 'yellow',
-    },
-    {
+  // Extract vitals from sensor readings
+  const extractVitals = (readings: SensorReading[]): VitalCard[] => {
+    const vitals: VitalCard[] = [];
+    
+    // Find latest readings for each vital type
+    const heartRateReading = readings
+      .filter(r => r.sensor?.sensor_type === 'heart_rate')
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+    
+    const glucoseReading = readings
+      .filter(r => r.sensor?.sensor_type === 'glucose' || r.sensor?.sensor_type === 'co2') // Using co2 as glucose proxy if available
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+    
+    // Heart Rate
+    if (heartRateReading) {
+      const value = Math.round(heartRateReading.value);
+      vitals.push({
+        icon: 'heart-outline',
+        label: 'Heart Rate',
+        value: value.toString(),
+        unit: heartRateReading.unit || 'bpm',
+        status: value > 100 || value < 60 ? 'warning' : 'normal',
+        color: value > 100 || value < 60 ? 'yellow' : 'green',
+      });
+    } else {
+      vitals.push({
+        icon: 'heart-outline',
+        label: 'Heart Rate',
+        value: '--',
+        unit: 'bpm',
+        status: 'normal',
+        color: 'green',
+      });
+    }
+
+    // Blood Glucose (using co2 or other sensor as proxy, or default)
+    if (glucoseReading) {
+      const value = Math.round(glucoseReading.value);
+      vitals.push({
+        icon: 'water-outline',
+        label: 'Blood Glucose',
+        value: value.toString(),
+        unit: glucoseReading.unit || 'mg/dL',
+        status: value < 70 || value > 180 ? 'warning' : 'normal',
+        color: value < 70 || value > 180 ? 'yellow' : 'green',
+      });
+    } else {
+      vitals.push({
+        icon: 'water-outline',
+        label: 'Blood Glucose',
+        value: '--',
+        unit: 'mg/dL',
+        status: 'normal',
+        color: 'green',
+      });
+    }
+
+    // Sleep Quality (placeholder - would need sleep sensor)
+    vitals.push({
       icon: 'moon-outline',
       label: 'Sleep Quality',
       value: '7.5',
       unit: 'hours',
       status: 'normal',
       color: 'green',
-    },
-    {
+    });
+
+    // Activity Level (placeholder - would need activity sensor)
+    vitals.push({
       icon: 'walk-outline',
       label: 'Activity Level',
       value: '5,432',
       unit: 'steps',
       status: 'normal',
       color: 'green',
-    },
-  ];
+    });
+
+    return vitals;
+  };
 
   const getVitalStyles = (color: string) => {
     switch (color) {
@@ -85,14 +183,45 @@ export function ResidentDashboard({ name, onEmergency }: ResidentDashboardProps)
     }
   };
 
+  const displayName = dashboardData?.user?.name || name;
+  const vitals = dashboardData ? extractVitals(dashboardData.recent_readings || []) : [];
+
+  if (loading && !dashboardData) {
+    return (
+      <View style={[styles.container, styles.centerContent]}>
+        <ActivityIndicator size="large" color="#2563eb" />
+        <Text style={styles.loadingText}>Loading dashboard...</Text>
+      </View>
+    );
+  }
+
+  if (error && !dashboardData) {
+    return (
+      <View style={[styles.container, styles.centerContent]}>
+        <Ionicons name="alert-circle" size={48} color="#dc2626" />
+        <Text style={styles.errorText}>{error}</Text>
+        <TouchableOpacity onPress={loadDashboardData} style={styles.retryButton}>
+          <Text style={styles.retryButtonText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.greeting}>
-            {getTimeGreeting()}, {name}
-          </Text>
+          <View style={styles.headerTop}>
+            <Text style={styles.greeting}>
+              {getTimeGreeting()}, {displayName}
+            </Text>
+            {onLogout && (
+              <TouchableOpacity onPress={onLogout} style={styles.logoutIconButton}>
+                <Ionicons name="log-out" size={24} color="#6b7280" />
+              </TouchableOpacity>
+            )}
+          </View>
           
           {/* Connection Status */}
           <View style={styles.connectionStatus}>
@@ -192,6 +321,33 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#ffffff',
   },
+  centerContent: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 16,
+  },
+  loadingText: {
+    fontSize: 16,
+    color: '#6b7280',
+    marginTop: 16,
+  },
+  errorText: {
+    fontSize: 16,
+    color: '#dc2626',
+    textAlign: 'center',
+    marginTop: 16,
+  },
+  retryButton: {
+    marginTop: 16,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    backgroundColor: '#2563eb',
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: '#ffffff',
+    fontWeight: '600',
+  },
   scrollContent: {
     padding: 24,
     paddingBottom: 100,
@@ -199,11 +355,20 @@ const styles = StyleSheet.create({
   header: {
     marginBottom: 24,
   },
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
   greeting: {
     fontSize: 28,
     fontWeight: 'bold',
     color: '#111827',
-    marginBottom: 16,
+    flex: 1,
+  },
+  logoutIconButton: {
+    padding: 8,
   },
   connectionStatus: {
     flexDirection: 'row',
