@@ -255,7 +255,12 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.headerTop}>
-            <Text style={styles.greeting}>
+            <Text 
+              style={styles.greeting}
+              numberOfLines={1}
+              adjustsFontSizeToFit={true}
+              minimumFontScale={0.7}
+            >
               {getTimeGreeting()}, {displayName}
             </Text>
             {onLogout && (
@@ -481,6 +486,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#111827',
     flex: 1,
+    flexShrink: 1,
   },
   logoutIconButton: {
     padding: 8,
