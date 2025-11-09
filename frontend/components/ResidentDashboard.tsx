@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Modal } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { apiClient, DashboardData, SensorReading } from '../lib/api';
 import { generateHealthInsights, Insight } from '../lib/healthInsights';
+import { getLatestHealthMetrics, initializeHealthKit } from '../lib/appleHealth';
 
 interface ResidentDashboardProps {
   name: string;
@@ -23,6 +24,7 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'status' | 'suggestions'>('status');
   const [notification, setNotification] = useState<{
     show: boolean;
     message: string;
@@ -35,9 +37,22 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
   });
   const [insights, setInsights] = useState<Insight[]>([]);
   const [activeEmergencyInsight, setActiveEmergencyInsight] = useState<Insight | null>(null);
+  const [healthMetrics, setHealthMetrics] = useState<{
+    heartRate: number;
+    steps: number;
+    sleepHours: number;
+    bloodGlucose: number;
+  } | null>(null);
+  const [showActionSheet, setShowActionSheet] = useState(false);
+  const [selectedInsight, setSelectedInsight] = useState<Insight | null>(null);
 
   useEffect(() => {
-    loadDashboardData();
+    // Initialize Apple Health on mount and wait for it
+    const initHealth = async () => {
+      await initializeHealthKit();
+      loadDashboardData();
+    };
+    initHealth();
     // Refresh every 30 seconds
     const interval = setInterval(loadDashboardData, 30000);
     return () => clearInterval(interval);
@@ -47,11 +62,20 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
     try {
       setLoading(true);
       setError(null);
+      
+      // Load Apple Health data
+      const metrics = await getLatestHealthMetrics();
+      setHealthMetrics(metrics);
+      
       const data = await apiClient.getDashboard();
       setDashboardData(data);
       
       // Show most recent critical/warning alert as notification
-      const activeAlerts = data.active_alerts || [];
+      // Filter out fall_detection, co2 (carbon monoxide), and smoke alerts
+      // Focusing only on temperature alerts for heat stroke prevention
+      const activeAlerts = (data.active_alerts || []).filter(
+        a => a.sensor_type !== 'fall_detection' && a.sensor_type !== 'co2' && a.sensor_type !== 'smoke'
+      );
       const criticalAlert = activeAlerts.find(a => a.alert_level === 'critical');
       const warningAlert = activeAlerts.find(a => a.alert_level === 'warning');
       const alertToShow = criticalAlert || warningAlert;
@@ -67,8 +91,12 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
 
       const generatedInsights = generateHealthInsights(data);
       setInsights(generatedInsights);
+      // Show emergency modal for critical alerts (temperature only - for heat stroke prevention)
       const emergency = generatedInsights.find(
-        (insight) => insight.tags?.includes('fall') && insight.severity === 'critical',
+        (insight) => 
+          insight.severity === 'critical' && 
+          (insight.tags?.includes('temperature') || 
+           insight.tags?.includes('emergency')),
       );
       setActiveEmergencyInsight(emergency ?? null);
     } catch (err) {
@@ -100,27 +128,32 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
     return 'Good Evening';
   };
 
-  // Extract vitals from sensor readings
+  // Extract vitals from Apple Health and sensor readings
   const extractVitals = (readings: SensorReading[]): VitalCard[] => {
     const vitals: VitalCard[] = [];
     
-    // Find latest readings for each vital type
-    const heartRateReading = readings
-      .filter(r => r.sensor?.sensor_type === 'heart_rate')
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+    // Use Apple Health data if available, otherwise fall back to sensor readings
+    const heartRate = healthMetrics?.heartRate || 
+      readings
+        .filter(r => r.sensor?.sensor_type === 'heart_rate')
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0]?.value || 0;
     
-    const glucoseReading = readings
-      .filter(r => r.sensor?.sensor_type === 'glucose' || r.sensor?.sensor_type === 'co2') // Using co2 as glucose proxy if available
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+    const bloodGlucose = healthMetrics?.bloodGlucose || 
+      readings
+        .filter(r => r.sensor?.sensor_type === 'glucose' || r.sensor?.sensor_type === 'co2')
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0]?.value || 0;
+    
+    const sleepHours = healthMetrics?.sleepHours || 0;
+    const steps = healthMetrics?.steps || 0;
     
     // Heart Rate
-    if (heartRateReading) {
-      const value = Math.round(heartRateReading.value);
+    if (heartRate > 0) {
+      const value = Math.round(heartRate);
       vitals.push({
         icon: 'heart-outline',
         label: 'Heart Rate',
         value: value.toString(),
-        unit: heartRateReading.unit || 'bpm',
+        unit: 'bpm',
         status: value > 100 || value < 60 ? 'warning' : 'normal',
         color: value > 100 || value < 60 ? 'yellow' : 'green',
       });
@@ -135,14 +168,14 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
       });
     }
 
-    // Blood Glucose (using co2 or other sensor as proxy, or default)
-    if (glucoseReading) {
-      const value = Math.round(glucoseReading.value);
+    // Blood Glucose
+    if (bloodGlucose > 0) {
+      const value = Math.round(bloodGlucose);
       vitals.push({
         icon: 'water-outline',
         label: 'Blood Glucose',
         value: value.toString(),
-        unit: glucoseReading.unit || 'mg/dL',
+        unit: 'mg/dL',
         status: value < 70 || value > 180 ? 'warning' : 'normal',
         color: value < 70 || value > 180 ? 'yellow' : 'green',
       });
@@ -157,25 +190,47 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
       });
     }
 
-    // Sleep Quality (placeholder - would need sleep sensor)
-    vitals.push({
-      icon: 'moon-outline',
-      label: 'Sleep Quality',
-      value: '7.5',
-      unit: 'hours',
-      status: 'normal',
-      color: 'green',
-    });
+    // Sleep Quality (from Apple Health)
+    if (sleepHours > 0) {
+      vitals.push({
+        icon: 'moon-outline',
+        label: 'Sleep Quality',
+        value: sleepHours.toFixed(1),
+        unit: 'hours',
+        status: sleepHours < 6 || sleepHours > 9 ? 'warning' : 'normal',
+        color: sleepHours < 6 || sleepHours > 9 ? 'yellow' : 'green',
+      });
+    } else {
+      vitals.push({
+        icon: 'moon-outline',
+        label: 'Sleep Quality',
+        value: '--',
+        unit: 'hours',
+        status: 'normal',
+        color: 'green',
+      });
+    }
 
-    // Activity Level (placeholder - would need activity sensor)
-    vitals.push({
-      icon: 'walk-outline',
-      label: 'Activity Level',
-      value: '5,432',
-      unit: 'steps',
-      status: 'normal',
-      color: 'green',
-    });
+    // Activity Level (from Apple Health steps)
+    if (steps > 0) {
+      vitals.push({
+        icon: 'walk-outline',
+        label: 'Activity Level',
+        value: steps.toLocaleString(),
+        unit: 'steps',
+        status: 'normal',
+        color: 'green',
+      });
+    } else {
+      vitals.push({
+        icon: 'walk-outline',
+        label: 'Activity Level',
+        value: '--',
+        unit: 'steps',
+        status: 'normal',
+        color: 'green',
+      });
+    }
 
     return vitals;
   };
@@ -223,7 +278,9 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
         <View style={styles.emergencyOverlay}>
           <View style={styles.emergencyModal}>
             <View style={styles.emergencyIcon}>
-              <Ionicons name="warning" size={48} color="#dc2626" />
+              <View style={styles.emergencyIconCircle}>
+                <Text style={styles.emergencyIconExclamation}>!</Text>
+              </View>
             </View>
             <Text style={styles.emergencyTitle}>{activeEmergencyInsight.title}</Text>
             <Text style={styles.emergencyMessage}>
@@ -309,80 +366,33 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
           </View>
         )}
 
-        {/* Health Insights */}
-        {insights.length > 0 && (
-          <View style={styles.insightsSection}>
-            <Text style={styles.insightsTitle}>Suggestions for Today</Text>
-            {insights.map((insight) => (
-              <View
-                key={insight.id}
-                style={[
-                  styles.insightCard,
-                  insight.severity === 'critical'
-                    ? styles.insightCardCritical
-                    : insight.severity === 'warning'
-                      ? styles.insightCardWarning
-                      : styles.insightCardInfo,
-                ]}
-              >
-                <View style={styles.insightHeader}>
-                  <Ionicons
-                    name={
-                      insight.severity === 'critical'
-                        ? 'warning'
-                        : insight.severity === 'warning'
-                          ? 'alert-circle'
-                        : 'bulb-outline'
-                    }
-                    size={20}
-                    color={
-                      insight.severity === 'critical'
-                        ? '#991b1b'
-                        : insight.severity === 'warning'
-                          ? '#854d0e'
-                          : '#2563eb'
-                    }
-                  />
-                  <Text
-                    style={[
-                      styles.insightTitle,
-                      insight.severity === 'critical'
-                        ? styles.insightTitleCritical
-                        : insight.severity === 'warning'
-                          ? styles.insightTitleWarning
-                          : styles.insightTitleInfo,
-                    ]}
-                  >
-                    {insight.title}
-                  </Text>
-                </View>
-                <Text style={styles.insightMessage}>{insight.message}</Text>
-                {insight.actions && insight.actions.length > 0 && (
-                  <View style={styles.insightActions}>
-                    {insight.actions.map((action) => (
-                      <Text key={action} style={styles.insightActionItem}>
-                        • {action}
-                      </Text>
-                    ))}
-                  </View>
-                )}
-                {insight.notifyGuardian && (
-                  <View style={styles.guardianBadge}>
-                    <Ionicons name="notifications" size={14} color="#1d4ed8" />
-                    <Text style={styles.guardianBadgeText}>Guardian notified</Text>
-                  </View>
-                )}
-                {insight.severity === 'critical' && (
-                  <TouchableOpacity style={styles.insightPrimaryButton}>
-                    <Text style={styles.insightPrimaryButtonText}>View Options</Text>
-                  </TouchableOpacity>
-                )}
+        {/* Tab Navigation */}
+        <View style={styles.tabContainer}>
+          <TouchableOpacity
+            style={[styles.tab, activeTab === 'status' && styles.tabActive]}
+            onPress={() => setActiveTab('status')}
+          >
+            <Ionicons name="pulse" size={20} color={activeTab === 'status' ? '#2563eb' : '#6b7280'} />
+            <Text style={[styles.tabLabel, activeTab === 'status' && styles.tabLabelActive]}>Status</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tab, activeTab === 'suggestions' && styles.tabActive]}
+            onPress={() => setActiveTab('suggestions')}
+          >
+            <Ionicons name="bulb" size={20} color={activeTab === 'suggestions' ? '#2563eb' : '#6b7280'} />
+            <Text style={[styles.tabLabel, activeTab === 'suggestions' && styles.tabLabelActive]}>Suggestions</Text>
+            {insights.length > 0 && (
+              <View style={styles.tabBadge}>
+                <Text style={styles.tabBadgeText}>{insights.length}</Text>
               </View>
-            ))}
-          </View>
-        )}
+            )}
+          </TouchableOpacity>
+        </View>
 
-        {/* Vitals Grid */}
+        {/* Status Tab Content */}
+        {activeTab === 'status' && (
+          <>
+            {/* Vitals Grid */}
         <View style={styles.vitalsGrid}>
           {vitals.map((vital) => {
             const vitalStyles = getVitalStyles(vital.color);
@@ -420,6 +430,89 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
             <Text style={styles.voiceAssistText}>🎙️ Voice assist available</Text>
           </View>
         </View>
+          </>
+        )}
+
+        {/* Suggestions Tab Content */}
+        {activeTab === 'suggestions' && (
+          <View style={styles.suggestionsContent}>
+            {insights.length > 0 ? (
+              <>
+                <Text style={styles.insightsTitle}>Suggestions for Today</Text>
+                {insights.map((insight, index) => (
+                  <View
+                    key={`${insight.title}-${index}`}
+                    style={[
+                      styles.insightCardCompact,
+                      insight.severity === 'critical'
+                        ? styles.insightCardCritical
+                        : insight.severity === 'warning'
+                          ? styles.insightCardWarning
+                          : styles.insightCardInfo,
+                    ]}
+                  >
+                    <View style={styles.insightHeaderCompact}>
+                      <Ionicons
+                        name={
+                          insight.severity === 'critical'
+                            ? 'warning'
+                            : insight.severity === 'warning'
+                              ? 'alert-circle'
+                            : 'bulb-outline'
+                        }
+                        size={18}
+                        color={
+                          insight.severity === 'critical'
+                            ? '#991b1b'
+                            : insight.severity === 'warning'
+                              ? '#854d0e'
+                              : '#2563eb'
+                        }
+                      />
+                      <Text
+                        style={[
+                          styles.insightTitleCompact,
+                          insight.severity === 'critical'
+                            ? styles.insightTitleCritical
+                            : insight.severity === 'warning'
+                              ? styles.insightTitleWarning
+                              : styles.insightTitleInfo,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {insight.title}
+                      </Text>
+                      {insight.notifyGuardian && (
+                        <View style={styles.guardianBadgeCompact}>
+                          <Ionicons name="notifications" size={12} color="#1d4ed8" />
+                        </View>
+                      )}
+                    </View>
+                    <Text style={styles.insightMessageCompact} numberOfLines={2}>
+                      {insight.message}
+                    </Text>
+                    {insight.severity === 'critical' && (
+                      <TouchableOpacity 
+                        style={styles.insightPrimaryButtonCompact}
+                        onPress={() => {
+                          setSelectedInsight(insight);
+                          setShowActionSheet(true);
+                        }}
+                      >
+                        <Text style={styles.insightPrimaryButtonTextCompact}>View Options</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ))}
+              </>
+            ) : (
+              <View style={styles.emptyState}>
+                <Ionicons name="bulb-outline" size={64} color="#d1d5db" />
+                <Text style={styles.emptyStateText}>No suggestions at this time</Text>
+              </View>
+            )}
+          </View>
+        )}
       </ScrollView>
 
       {/* Emergency Button - Fixed at Bottom */}
@@ -432,6 +525,59 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
           <Text style={styles.emergencyButtonText}>Call for Help</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Action Sheet Modal for View Options */}
+      <Modal
+        visible={showActionSheet}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowActionSheet(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.actionSheet}>
+            <View style={styles.actionSheetHeader}>
+              <Text style={styles.actionSheetTitle}>Select Action</Text>
+              <TouchableOpacity
+                onPress={() => setShowActionSheet(false)}
+                style={styles.actionSheetCloseButton}
+              >
+                <Ionicons name="close" size={24} color="#6b7280" />
+              </TouchableOpacity>
+            </View>
+            {selectedInsight && (
+              <View style={styles.actionSheetContent}>
+                <Text style={styles.actionSheetMessage}>{selectedInsight.message}</Text>
+              </View>
+            )}
+            <View style={styles.actionSheetButtons}>
+              <TouchableOpacity
+                style={[styles.actionSheetButton, styles.actionSheetButtonCall]}
+                onPress={() => {
+                  setShowActionSheet(false);
+                  onEmergency();
+                }}
+              >
+                <Ionicons name="call" size={20} color="#ffffff" />
+                <Text style={styles.actionSheetButtonText}>Call</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionSheetButton, styles.actionSheetButtonDismiss]}
+                onPress={() => {
+                  setShowActionSheet(false);
+                  setSelectedInsight(null);
+                  // Optionally remove the insight from the list
+                  if (selectedInsight) {
+                    setInsights(prev => prev.filter(i => i.title !== selectedInsight.title));
+                  }
+                }}
+              >
+                <Ionicons name="close-circle" size={20} color="#6b7280" />
+                <Text style={[styles.actionSheetButtonText, { color: '#6b7280' }]}>Dismiss</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -548,12 +694,19 @@ const styles = StyleSheet.create({
   },
   insightsSection: {
     marginBottom: 24,
-    gap: 16,
+    gap: 8,
   },
   insightsTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '600',
     color: '#111827',
+    marginBottom: 8,
+  },
+  insightCardCompact: {
+    padding: 18,
+    borderRadius: 16,
+    borderWidth: 2,
+    marginBottom: 12,
   },
   insightCard: {
     padding: 20,
@@ -572,6 +725,41 @@ const styles = StyleSheet.create({
   insightCardCritical: {
     backgroundColor: '#fef2f2',
     borderColor: '#fca5a5',
+  },
+  insightHeaderCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  insightTitleCompact: {
+    fontSize: 16,
+    fontWeight: '600',
+    flex: 1,
+  },
+  insightMessageCompact: {
+    fontSize: 14,
+    color: '#4b5563',
+    lineHeight: 20,
+    marginBottom: 10,
+  },
+  guardianBadgeCompact: {
+    padding: 6,
+    backgroundColor: '#dbeafe',
+    borderRadius: 10,
+  },
+  insightPrimaryButtonCompact: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#dc2626',
+    borderRadius: 10,
+  },
+  insightPrimaryButtonTextCompact: {
+    color: '#ffffff',
+    fontWeight: '600',
+    fontSize: 14,
   },
   insightHeader: {
     flexDirection: 'row',
@@ -661,10 +849,21 @@ const styles = StyleSheet.create({
   emergencyIcon: {
     width: 80,
     height: 80,
-    borderRadius: 40,
-    backgroundColor: '#fee2e2',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  emergencyIconCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#dc2626',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emergencyIconExclamation: {
+    fontSize: 48,
+    fontWeight: '700',
+    color: '#ffffff',
   },
   emergencyTitle: {
     fontSize: 22,
@@ -769,6 +968,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     padding: 24,
+    paddingBottom: 60,
     backgroundColor: '#ffffff',
     borderTopWidth: 1,
     borderTopColor: '#e5e7eb',
@@ -791,5 +991,134 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 18,
     fontWeight: '600',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  actionSheet: {
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 24,
+    paddingBottom: 40,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  actionSheetHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  actionSheetTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  actionSheetCloseButton: {
+    padding: 4,
+  },
+  actionSheetContent: {
+    marginBottom: 24,
+  },
+  actionSheetMessage: {
+    fontSize: 16,
+    color: '#4b5563',
+    lineHeight: 24,
+  },
+  actionSheetButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  actionSheetButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    borderRadius: 12,
+    gap: 8,
+  },
+  actionSheetButtonCall: {
+    backgroundColor: '#dc2626',
+  },
+  actionSheetButtonDismiss: {
+    backgroundColor: '#f3f4f6',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  actionSheetButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#f9fafb',
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 24,
+    marginHorizontal: 24,
+  },
+  tab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    gap: 6,
+  },
+  tabActive: {
+    backgroundColor: '#ffffff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  tabLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#6b7280',
+  },
+  tabLabelActive: {
+    color: '#2563eb',
+    fontWeight: '600',
+  },
+  tabBadge: {
+    backgroundColor: '#dc2626',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    paddingHorizontal: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 4,
+  },
+  tabBadgeText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  suggestionsContent: {
+    paddingHorizontal: 24,
+    paddingBottom: 24,
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 64,
+  },
+  emptyStateText: {
+    fontSize: 16,
+    color: '#9ca3af',
+    marginTop: 16,
   },
 });

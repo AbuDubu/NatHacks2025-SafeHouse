@@ -14,6 +14,15 @@
     "assetBundlePatterns": [
       "**/*"
     ],
+    "plugins": [
+      [
+        "react-native-health",
+        {
+          "healthSharePermission": "This app needs access to your health data to display vital signs and health trends.",
+          "healthUpdatePermission": "This app needs permission to update your health data."
+        }
+      ]
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.safehaven.app"

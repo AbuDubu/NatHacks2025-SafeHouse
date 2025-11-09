@@ -4,6 +4,7 @@ import { LineChart } from 'react-native-chart-kit';
 import { Dimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { apiClient, SensorReading, Sensor } from '../lib/api';
+import { getHeartRateData, getBloodGlucoseData, getStepCountData, getSleepData, initializeHealthKit } from '../lib/appleHealth';
 
 const screenWidth = Dimensions.get('window').width;
 
@@ -25,7 +26,12 @@ export function GuardianTrends() {
   const [activityData, setActivityData] = useState<ChartData | null>(null);
 
   useEffect(() => {
-    loadTrendData();
+    // Initialize Apple Health on mount and wait for it
+    const initHealth = async () => {
+      await initializeHealthKit();
+      loadTrendData();
+    };
+    initHealth();
   }, []);
 
   const loadTrendData = async () => {
@@ -33,14 +39,7 @@ export function GuardianTrends() {
       setLoading(true);
       setError(null);
 
-      // Get all sensors
-      const sensors = await apiClient.getSensors();
-      
-      // Find sensors by type
-      const heartRateSensor = sensors.find(s => s.sensor_type === 'heart_rate');
-      const glucoseSensor = sensors.find(s => s.sensor_type === 'glucose' || s.sensor_type === 'co2');
-      
-      // Load readings for the past 7 days
+      // Generate labels for the past 7 days
       const daysAgo = 7;
       const now = new Date();
       const labels = [];
@@ -50,80 +49,160 @@ export function GuardianTrends() {
         labels.push(date.toLocaleDateString('en-US', { weekday: 'short' }));
       }
 
-      // Load heart rate data
-      if (heartRateSensor) {
-        try {
-          const readings = await apiClient.getSensorReadings(heartRateSensor.id, { hours: daysAgo * 24 });
-          const data = processReadingsForChart(readings, labels, daysAgo);
+      // Load heart rate data from Apple Health
+      try {
+        const heartRateHealthData = await getHeartRateData(daysAgo);
+        const dailyHeartRate = processHealthDataByDay(heartRateHealthData, daysAgo, 'heartRate');
+        
+        // Only set data if we have real data (at least some non-zero values)
+        if (dailyHeartRate.length === 7 && dailyHeartRate.some(val => val > 0)) {
           setHeartRateData({
             labels,
             datasets: [{
-              data,
+              data: dailyHeartRate,
               color: (opacity = 1) => `rgba(239, 68, 68, ${opacity})`,
               strokeWidth: 3,
             }],
           });
-        } catch (err) {
-          console.error('Error loading heart rate data:', err);
+        } else {
+          // Try to get from backend sensor data
+          const heartRateSensors = await apiClient.getSensors({ sensor_type: 'heart_rate' });
+          if (heartRateSensors.length > 0) {
+            const readings = await apiClient.getSensorReadings(heartRateSensors[0].id, { hours: daysAgo * 24 });
+            const dailyFromBackend = processReadingsForChart(readings, labels, daysAgo);
+            if (dailyFromBackend.some(val => val > 0)) {
+              setHeartRateData({
+                labels,
+                datasets: [{
+                  data: dailyFromBackend,
+                  color: (opacity = 1) => `rgba(239, 68, 68, ${opacity})`,
+                  strokeWidth: 3,
+                }],
+              });
+            }
+          }
         }
-      } else {
-        // Default data if no sensor
-        setHeartRateData({
-          labels,
-          datasets: [{
-            data: [68, 70, 72, 71, 69, 72, 70],
-            color: (opacity = 1) => `rgba(239, 68, 68, ${opacity})`,
-            strokeWidth: 3,
-          }],
-        });
+      } catch (err) {
+        console.error('Error loading heart rate data:', err);
+        // No fallback - data will remain null and chart won't show
       }
 
-      // Load glucose data
-      if (glucoseSensor) {
-        try {
-          const readings = await apiClient.getSensorReadings(glucoseSensor.id, { hours: daysAgo * 24 });
-          const data = processReadingsForChart(readings, labels, daysAgo);
+      // Load glucose data from Apple Health
+      try {
+        const glucoseHealthData = await getBloodGlucoseData(daysAgo);
+        const dailyGlucose = processHealthDataByDay(glucoseHealthData, daysAgo, 'bloodGlucose');
+        
+        // Only set data if we have real data (at least some non-zero values)
+        if (dailyGlucose.length === 7 && dailyGlucose.some(val => val > 0)) {
           setGlucoseData({
             labels,
             datasets: [{
-              data,
+              data: dailyGlucose,
               color: (opacity = 1) => `rgba(59, 130, 246, ${opacity})`,
               strokeWidth: 2,
             }],
           });
-        } catch (err) {
-          console.error('Error loading glucose data:', err);
+        } else {
+          // Try to get from backend sensor data
+          const glucoseSensors = await apiClient.getSensors({ sensor_type: 'blood_glucose' });
+          if (glucoseSensors.length > 0) {
+            const readings = await apiClient.getSensorReadings(glucoseSensors[0].id, { hours: daysAgo * 24 });
+            const dailyFromBackend = processReadingsForChart(readings, labels, daysAgo);
+            if (dailyFromBackend.some(val => val > 0)) {
+              setGlucoseData({
+                labels,
+                datasets: [{
+                  data: dailyFromBackend,
+                  color: (opacity = 1) => `rgba(59, 130, 246, ${opacity})`,
+                  strokeWidth: 2,
+                }],
+              });
+            }
+          }
         }
-      } else {
-        // Default data if no sensor
-        setGlucoseData({
-          labels,
-          datasets: [{
-            data: [95, 88, 92, 78, 68, 85, 90],
-            color: (opacity = 1) => `rgba(59, 130, 246, ${opacity})`,
-            strokeWidth: 2,
-          }],
-        });
+      } catch (err) {
+        console.error('Error loading glucose data:', err);
+        // No fallback - data will remain null and chart won't show
       }
 
-      // Sleep and activity are placeholders (would need specific sensors)
-      setSleepData({
-        labels,
-        datasets: [{
-          data: [7.5, 8.0, 7.2, 6.8, 7.5, 8.2, 7.8],
-          color: (opacity = 1) => `rgba(139, 92, 246, ${opacity})`,
-          strokeWidth: 3,
-        }],
-      });
+      // Load sleep data from Apple Health
+      try {
+        const sleepHealthData = await getSleepData(daysAgo);
+        const dailySleep = processHealthDataByDay(sleepHealthData, daysAgo, 'sleepHours');
+        
+        // Only set data if we have real data (at least some non-zero values)
+        if (dailySleep.length === 7 && dailySleep.some(val => val > 0)) {
+          setSleepData({
+            labels,
+            datasets: [{
+              data: dailySleep,
+              color: (opacity = 1) => `rgba(139, 92, 246, ${opacity})`,
+              strokeWidth: 3,
+            }],
+          });
+        } else {
+          // Try to get from backend sensor data
+          const sleepSensors = await apiClient.getSensors({ sensor_type: 'sleep' });
+          if (sleepSensors.length > 0) {
+            const readings = await apiClient.getSensorReadings(sleepSensors[0].id, { hours: daysAgo * 24 });
+            const dailyFromBackend = processReadingsForChart(readings, labels, daysAgo);
+            if (dailyFromBackend.some(val => val > 0)) {
+              setSleepData({
+                labels,
+                datasets: [{
+                  data: dailyFromBackend,
+                  color: (opacity = 1) => `rgba(139, 92, 246, ${opacity})`,
+                  strokeWidth: 3,
+                }],
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Error loading sleep data:', err);
+        // No fallback - data will remain null and chart won't show
+      }
 
-      setActivityData({
-        labels,
-        datasets: [{
-          data: [4200, 5100, 4800, 3900, 5400, 6200, 5800],
-          color: (opacity = 1) => `rgba(16, 185, 129, ${opacity})`,
-          strokeWidth: 2,
-        }],
-      });
+      // Load activity (steps) data from Apple Health
+      try {
+        const activityHealthData = await getStepCountData(daysAgo);
+        const dailyActivity = processHealthDataByDay(activityHealthData, daysAgo, 'steps');
+        
+        // Only set data if we have real data (at least some non-zero values)
+        if (dailyActivity.length === 7 && dailyActivity.some(val => val > 0)) {
+          setActivityData({
+            labels,
+            datasets: [{
+              data: dailyActivity,
+              color: (opacity = 1) => `rgba(16, 185, 129, ${opacity})`,
+              strokeWidth: 2,
+            }],
+          });
+        } else {
+          // Try to get from backend sensor data (activity or step_count)
+          const activitySensors = await apiClient.getSensors({ sensor_type: 'activity' });
+          const stepSensors = await apiClient.getSensors({ sensor_type: 'step_count' });
+          const sensorsToUse = activitySensors.length > 0 ? activitySensors : stepSensors;
+          
+          if (sensorsToUse.length > 0) {
+            const readings = await apiClient.getSensorReadings(sensorsToUse[0].id, { hours: daysAgo * 24 });
+            const dailyFromBackend = processReadingsForChart(readings, labels, daysAgo);
+            if (dailyFromBackend.some(val => val > 0)) {
+              setActivityData({
+                labels,
+                datasets: [{
+                  data: dailyFromBackend,
+                  color: (opacity = 1) => `rgba(16, 185, 129, ${opacity})`,
+                  strokeWidth: 2,
+                }],
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Error loading activity data:', err);
+        // No fallback - data will remain null and chart won't show
+      }
 
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load trend data');
@@ -131,6 +210,70 @@ export function GuardianTrends() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Process Apple Health data by day for chart display
+  const processHealthDataByDay = (
+    healthData: Array<{ date: Date; heartRate?: number; steps?: number; sleepHours?: number; bloodGlucose?: number }>,
+    days: number,
+    type: 'heartRate' | 'steps' | 'sleepHours' | 'bloodGlucose'
+  ): number[] => {
+    if (healthData.length === 0) {
+      return Array(7).fill(0);
+    }
+
+    const now = new Date();
+    const dayData: { [key: number]: number[] } = {};
+    
+    // Initialize day buckets
+    for (let i = 0; i < days; i++) {
+      dayData[i] = [];
+    }
+
+    // Group data by day
+    healthData.forEach(data => {
+      const dataDate = new Date(data.date);
+      const daysDiff = Math.floor((now.getTime() - dataDate.getTime()) / (1000 * 60 * 60 * 24));
+      if (daysDiff >= 0 && daysDiff < days) {
+        let value: number | undefined;
+        switch (type) {
+          case 'heartRate':
+            value = data.heartRate;
+            break;
+          case 'steps':
+            value = data.steps;
+            break;
+          case 'sleepHours':
+            value = data.sleepHours;
+            break;
+          case 'bloodGlucose':
+            value = data.bloodGlucose;
+            break;
+        }
+        if (value !== undefined && value > 0) {
+          dayData[daysDiff].push(value);
+        }
+      }
+    });
+
+    // Calculate average or sum for each day
+    const result: number[] = [];
+    for (let i = days - 1; i >= 0; i--) {
+      if (dayData[i].length > 0) {
+        if (type === 'steps') {
+          // Sum steps for the day
+          result.push(Math.round(dayData[i].reduce((sum, val) => sum + val, 0)));
+        } else {
+          // Average for other metrics
+          const avg = dayData[i].reduce((sum, val) => sum + val, 0) / dayData[i].length;
+          result.push(Math.round(avg * 10) / 10); // Round to 1 decimal
+        }
+      } else {
+        result.push(0);
+      }
+    }
+
+    return result;
   };
 
   const processReadingsForChart = (readings: SensorReading[], labels: string[], days: number): number[] => {
@@ -162,8 +305,8 @@ export function GuardianTrends() {
         const avg = values.reduce((sum, val) => sum + val, 0) / values.length;
         result.push(Math.round(avg * 10) / 10);
       } else {
-        // Use previous day's value or 0
-        result.push(result.length > 0 ? result[result.length - 1] : 0);
+        // No data for this day - return 0 (no fallback to previous day)
+        result.push(0);
       }
     }
 
@@ -208,9 +351,22 @@ export function GuardianTrends() {
     );
   }
 
+  // Check if we have any data at all
+  const hasAnyData = heartRateData || glucoseData || sleepData || activityData;
+
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.title}>Trend Analytics</Text>
+
+      {!hasAnyData && (
+        <View style={[styles.chartCard, styles.centerContent]}>
+          <Ionicons name="stats-chart-outline" size={64} color="#d1d5db" />
+          <Text style={styles.noDataText}>No trend data available</Text>
+          <Text style={styles.noDataSubtext}>
+            Connect Apple Health or ensure sensors are sending data to view trends.
+          </Text>
+        </View>
+      )}
 
       {/* Heart Rate Trend */}
       {heartRateData && (
@@ -444,5 +600,18 @@ const styles = StyleSheet.create({
   chart: {
     marginVertical: 8,
     borderRadius: 16,
+  },
+  noDataText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#6b7280',
+    marginTop: 16,
+  },
+  noDataSubtext: {
+    fontSize: 14,
+    color: '#9ca3af',
+    textAlign: 'center',
+    marginTop: 8,
+    paddingHorizontal: 24,
   },
 });

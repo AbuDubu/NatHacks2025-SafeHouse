@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView, ActivityIndicator, Switch } from 'react-native';
+import { View, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView, ActivityIndicator, Switch, Modal } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { GuardianTrends } from './GuardianTrends';
 import { HouseTemperatureTab } from './HouseTemperatureTab';
@@ -37,6 +37,9 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
   const [error, setError] = useState<string | null>(null);
   const [criticalAlert, setCriticalAlert] = useState<Alert | null>(null);
   const [guardian, setGuardian] = useState<User | null>(null);
+  const [showActionSheet, setShowActionSheet] = useState(false);
+  const [selectedInsight, setSelectedInsight] = useState<{ insight: Insight; residentName: string; residentId: number } | null>(null);
+  const [dismissedInsights, setDismissedInsights] = useState<Set<string>>(new Set());
 
   const toggleDarkMode = () => {
     setThemeMode(isDark ? 'light' : 'dark');
@@ -70,7 +73,12 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
         usersToLoad.map(async (user) => {
           try {
             const dashboardData = await apiClient.getDashboard(user.id);
-            const activeAlerts = dashboardData.active_alerts || [];
+            // Filter out fall_detection alerts
+            // Filter out fall_detection, co2 (carbon monoxide), and smoke alerts
+            // Focusing only on temperature alerts for heat stroke prevention
+            const activeAlerts = (dashboardData.active_alerts || []).filter(
+              a => a.sensor_type !== 'fall_detection' && a.sensor_type !== 'co2' && a.sensor_type !== 'smoke'
+            );
             const criticalAlerts = activeAlerts.filter(a => a.alert_level === 'critical');
             const warningAlerts = activeAlerts.filter(a => a.alert_level === 'warning');
             
@@ -87,6 +95,15 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
             const heartRate = getLatestReading(readings, 'heart_rate') || 0;
             const glucose = getLatestReading(readings, 'glucose') || 0;
             
+            // Get sleep and activity from sensor readings if available
+            // Sleep could come from sleep sensor or calculated from activity patterns
+            const sleepReading = readings.find(r => r.sensor?.sensor_type === 'sleep');
+            const sleep = sleepReading ? sleepReading.value : 0;
+            
+            // Activity from step count sensor if available
+            const activityReading = readings.find(r => r.sensor?.sensor_type === 'activity' || r.sensor?.sensor_type === 'step_count');
+            const activity = activityReading ? Math.round(activityReading.value) : 0;
+            
             // Set critical alert if found
             if (criticalAlerts.length > 0 && !criticalAlert) {
               setCriticalAlert(criticalAlerts[0]);
@@ -101,8 +118,8 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
               vitals: {
                 heartRate: Math.round(heartRate),
                 glucose: Math.round(glucose),
-                sleep: 7.5, // Placeholder
-                activity: 5432, // Placeholder
+                sleep: sleep > 0 ? sleep : 0,
+                activity: activity > 0 ? activity : 0,
               },
               dashboardData,
               insights: generateHealthInsights(dashboardData).filter(insight => insight.notifyGuardian),
@@ -167,11 +184,11 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
   const getStatusText = (status: string) => {
     switch (status) {
       case 'normal':
-        return 'All Normal';
+        return 'Stable';
       case 'warning':
-        return 'Trending Concern';
+        return 'Monitor';
       case 'alert':
-        return 'Alert';
+        return 'Critical';
       default:
         return 'Unknown';
     }
@@ -330,48 +347,18 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
                       </View>
                       <View style={[styles.vitalItem, { backgroundColor: colors.muted }]}>
                         <Text style={[styles.vitalLabel, { color: colors.mutedForeground }]}>Sleep</Text>
-                        <Text style={[styles.vitalValue, { color: colors.foreground }]}>{resident.vitals.sleep}h</Text>
+                        <Text style={[styles.vitalValue, { color: colors.foreground }]}>
+                          {resident.vitals.sleep > 0 ? `${resident.vitals.sleep}h` : '--'}
+                        </Text>
                       </View>
                       <View style={[styles.vitalItem, { backgroundColor: colors.muted }]}>
                         <Text style={[styles.vitalLabel, { color: colors.mutedForeground }]}>Activity</Text>
-                        <Text style={[styles.vitalValue, { color: colors.foreground }]}>{resident.vitals.activity} steps</Text>
+                        <Text style={[styles.vitalValue, { color: colors.foreground }]}>
+                          {resident.vitals.activity > 0 ? `${resident.vitals.activity} steps` : '--'}
+                        </Text>
                       </View>
                     </View>
 
-                    {resident.insights && resident.insights.length > 0 && (
-                      <View style={styles.guardianInsightsSection}>
-                        {resident.insights.map((insight) => (
-                          <View
-                            key={insight.id}
-                            style={[
-                              styles.guardianInsightCard,
-                              insight.severity === 'critical'
-                                ? styles.guardianInsightCritical
-                                : styles.guardianInsightWarning,
-                            ]}
-                          >
-                            <View style={styles.guardianInsightHeader}>
-                              <Ionicons
-                                name={insight.severity === 'critical' ? 'warning' : 'alert-circle'}
-                                size={16}
-                                color={insight.severity === 'critical' ? '#991b1b' : '#854d0e'}
-                              />
-                              <Text
-                                style={[
-                                  styles.guardianInsightTitle,
-                                  insight.severity === 'critical'
-                                    ? styles.guardianInsightTitleCritical
-                                    : styles.guardianInsightTitleWarning,
-                                ]}
-                              >
-                                {insight.title}
-                              </Text>
-                            </View>
-                            <Text style={styles.guardianInsightMessage}>{insight.message}</Text>
-                          </View>
-                        ))}
-                      </View>
-                    )}
 
                     {/* Action Button */}
                     <TouchableOpacity style={[styles.checkInButton, { borderColor: colors.ring }]}>
@@ -392,10 +379,98 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
       )}
 
       {activeTab === 'messages' && (
-        <View style={styles.emptyState}>
-          <Ionicons name="chatbubbles" size={64} color={colors.mutedForeground} />
-          <Text style={[styles.emptyStateText, { color: colors.mutedForeground }]}>Messages coming soon</Text>
-        </View>
+        <ScrollView contentContainerStyle={[styles.scrollContent, { backgroundColor: colors.background }]}>
+          <View style={styles.header}>
+            <Text style={[styles.title, { color: colors.foreground }]}>Notifications</Text>
+            <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
+              Alerts and insights for all residents
+            </Text>
+          </View>
+
+          {residents.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Ionicons name="notifications-outline" size={64} color={colors.mutedForeground} />
+              <Text style={[styles.emptyStateText, { color: colors.mutedForeground }]}>No residents found</Text>
+            </View>
+          ) : (
+            <View style={styles.notificationsList}>
+              {residents.flatMap((resident) => {
+                if (!resident.insights || resident.insights.length === 0) return [];
+                
+                return resident.insights
+                  .filter((insight, index) => {
+                    const insightKey = `${resident.id}-${insight.title}-${index}`;
+                    return !dismissedInsights.has(insightKey);
+                  })
+                  .map((insight, index) => {
+                    const insightKey = `${resident.id}-${insight.title}-${index}`;
+                    return (
+                  <View
+                    key={insightKey}
+                    style={[
+                      styles.notificationCard,
+                      {
+                        backgroundColor: insight.severity === 'critical' 
+                          ? '#fee2e2' 
+                          : insight.severity === 'warning'
+                          ? '#fef3c7'
+                          : '#e0e7ff',
+                        borderColor: insight.severity === 'critical'
+                          ? '#fca5a5'
+                          : insight.severity === 'warning'
+                          ? '#fde047'
+                          : '#c7d2fe',
+                      }
+                    ]}
+                  >
+                    <View style={styles.notificationHeader}>
+                      <View style={styles.notificationHeaderLeft}>
+                        <Ionicons
+                          name={insight.severity === 'critical' ? 'warning' : 'alert-circle'}
+                          size={20}
+                          color={insight.severity === 'critical' ? '#991b1b' : '#854d0e'}
+                        />
+                        <Text
+                          style={[
+                            styles.notificationTitle,
+                            {
+                              color: insight.severity === 'critical' ? '#991b1b' : '#854d0e',
+                            }
+                          ]}
+                        >
+                          {insight.title}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={styles.notificationMessage}>{insight.message}</Text>
+                    <Text style={styles.notificationResident}>Resident: {resident.name}</Text>
+                    {insight.severity === 'critical' && (
+                      <TouchableOpacity
+                        style={styles.viewOptionsButton}
+                        onPress={() => {
+                          setSelectedInsight({ insight, residentName: resident.name, residentId: resident.id });
+                          setShowActionSheet(true);
+                        }}
+                      >
+                        <Text style={styles.viewOptionsButtonText}>View Options</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                    );
+                  });
+              })}
+              
+              {residents.every(r => !r.insights || r.insights.length === 0) && (
+                <View style={styles.emptyState}>
+                  <Ionicons name="notifications-outline" size={64} color={colors.mutedForeground} />
+                  <Text style={[styles.emptyStateText, { color: colors.mutedForeground }]}>
+                    No notifications at this time
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
+        </ScrollView>
       )}
 
       {activeTab === 'settings' && (
@@ -497,13 +572,13 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
           <Ionicons name="trending-up" size={24} color={activeTab === 'trends' ? colors.primary : colors.mutedForeground} />
           <Text style={[styles.navLabel, activeTab === 'trends' && { color: colors.primary }, !activeTab && { color: colors.mutedForeground }]}>Trends</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => setActiveTab('messages')}
-          style={[styles.navItem, activeTab === 'messages' && styles.navItemActive]}
-        >
-          <Ionicons name="chatbubbles" size={24} color={activeTab === 'messages' ? colors.primary : colors.mutedForeground} />
-          <Text style={[styles.navLabel, activeTab === 'messages' && { color: colors.primary }, !activeTab && { color: colors.mutedForeground }]}>Messages</Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setActiveTab('messages')}
+            style={[styles.navItem, activeTab === 'messages' && styles.navItemActive]}
+          >
+            <Ionicons name="notifications" size={24} color={activeTab === 'messages' ? colors.primary : colors.mutedForeground} />
+            <Text style={[styles.navLabel, activeTab === 'messages' && { color: colors.primary }, !activeTab && { color: colors.mutedForeground }]}>Notifications</Text>
+          </TouchableOpacity>
         <TouchableOpacity
           onPress={() => setActiveTab('temperature')}
           style={[styles.navItem, activeTab === 'temperature' && styles.navItemActive]}
@@ -519,6 +594,78 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
           <Text style={[styles.navLabel, activeTab === 'settings' && { color: colors.primary }, !activeTab && { color: colors.mutedForeground }]}>Settings</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Action Sheet Modal for View Options */}
+      <Modal
+        visible={showActionSheet}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowActionSheet(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.actionSheet, { backgroundColor: colors.card }]}>
+            <View style={styles.actionSheetHeader}>
+              <Text style={[styles.actionSheetTitle, { color: colors.foreground }]}>Select Action</Text>
+              <TouchableOpacity
+                onPress={() => setShowActionSheet(false)}
+                style={styles.actionSheetCloseButton}
+              >
+                <Ionicons name="close" size={24} color={colors.mutedForeground} />
+              </TouchableOpacity>
+            </View>
+            {selectedInsight && (
+              <View style={styles.actionSheetContent}>
+                <Text style={[styles.actionSheetMessage, { color: colors.foreground }]}>
+                  {selectedInsight.insight.message}
+                </Text>
+                <Text style={[styles.actionSheetResident, { color: colors.mutedForeground }]}>
+                  Resident: {selectedInsight.residentName}
+                </Text>
+              </View>
+            )}
+            <View style={styles.actionSheetButtons}>
+              <TouchableOpacity
+                style={[styles.actionSheetButton, styles.actionSheetButtonCall]}
+                onPress={() => {
+                  setShowActionSheet(false);
+                  if (selectedInsight) {
+                    onEmergency({
+                      residentName: selectedInsight.residentName,
+                      alertType: selectedInsight.insight.severity,
+                    });
+                  }
+                }}
+              >
+                <Ionicons name="call" size={20} color="#ffffff" />
+                <Text style={styles.actionSheetButtonText}>Call</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionSheetButton, styles.actionSheetButtonDismiss, { backgroundColor: colors.muted, borderColor: colors.border }]}
+                onPress={() => {
+                  if (selectedInsight) {
+                    // Find the actual insight index to create the correct key
+                    const resident = residents.find(r => r.id === selectedInsight.residentId);
+                    if (resident && resident.insights) {
+                      const insightIndex = resident.insights.findIndex(
+                        i => i.title === selectedInsight.insight.title && i.message === selectedInsight.insight.message
+                      );
+                      if (insightIndex >= 0) {
+                        const insightKey = `${selectedInsight.residentId}-${selectedInsight.insight.title}-${insightIndex}`;
+                        setDismissedInsights(prev => new Set([...prev, insightKey]));
+                      }
+                    }
+                  }
+                  setShowActionSheet(false);
+                  setSelectedInsight(null);
+                }}
+              >
+                <Ionicons name="close-circle" size={20} color={colors.mutedForeground} />
+                <Text style={[styles.actionSheetButtonTextDismiss, { color: colors.mutedForeground }]}>Dismiss</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -802,6 +949,152 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
     fontSize: 16,
     color: '#6b7280',
     marginTop: 16,
+  },
+  notificationsList: {
+    gap: 16,
+    paddingBottom: 20,
+  },
+  notificationCard: {
+    padding: 20,
+    borderRadius: 16,
+    borderWidth: 2,
+    marginBottom: 12,
+  },
+  notificationHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  notificationHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  notificationTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    flex: 1,
+  },
+  notificationMessage: {
+    fontSize: 14,
+    color: '#4b5563',
+    marginBottom: 8,
+    lineHeight: 20,
+  },
+  notificationResident: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginBottom: 12,
+    fontStyle: 'italic',
+  },
+  guardianNotifiedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#dbeafe',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#93c5fd',
+  },
+  guardianNotifiedText: {
+    fontSize: 12,
+    color: '#1d4ed8',
+    fontWeight: '500',
+  },
+  viewOptionsButton: {
+    backgroundColor: '#dc2626',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  viewOptionsButtonText: {
+    color: '#ffffff',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  subtitle: {
+    fontSize: 14,
+    color: '#6b7280',
+    marginTop: 4,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  actionSheet: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 24,
+    paddingBottom: 40,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  actionSheetHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  actionSheetTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  actionSheetCloseButton: {
+    padding: 4,
+  },
+  actionSheetContent: {
+    marginBottom: 24,
+  },
+  actionSheetMessage: {
+    fontSize: 16,
+    color: '#4b5563',
+    lineHeight: 24,
+    marginBottom: 8,
+  },
+  actionSheetResident: {
+    fontSize: 14,
+    fontStyle: 'italic',
+  },
+  actionSheetButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  actionSheetButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    borderRadius: 12,
+    gap: 8,
+  },
+  actionSheetButtonCall: {
+    backgroundColor: '#dc2626',
+  },
+  actionSheetButtonDismiss: {
+    backgroundColor: '#f3f4f6',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  actionSheetButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  actionSheetButtonTextDismiss: {
+    fontSize: 16,
+    fontWeight: '600',
   },
   bottomNav: {
     position: 'absolute',
