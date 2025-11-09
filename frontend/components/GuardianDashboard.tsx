@@ -34,6 +34,7 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [criticalAlert, setCriticalAlert] = useState<Alert | null>(null);
+  const [guardian, setGuardian] = useState<User | null>(null);
 
   const toggleDarkMode = () => {
     setThemeMode(isDark ? 'light' : 'dark');
@@ -51,13 +52,20 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
       setLoading(true);
       setError(null);
       
-      // Get all users
-      const users = await apiClient.getUsers();
-      const primaryUsers = users.filter(u => u.is_primary);
+      // Get the guardian user (default guardian)
+      const guardianUser = await apiClient.getDefaultGuardian();
+      setGuardian(guardianUser);
+      
+      // Get residents under this guardian's care
+      const residentUsers = await apiClient.getGuardianResidents(guardianUser.id);
+      
+      // If no residents linked, fall back to all primary users (for backward compatibility)
+      const usersToLoad = residentUsers.length > 0 ? residentUsers : 
+        (await apiClient.getUsers()).filter(u => u.is_primary);
       
       // Load dashboard data for each resident
       const residentsData: Resident[] = await Promise.all(
-        primaryUsers.map(async (user) => {
+        usersToLoad.map(async (user) => {
           try {
             const dashboardData = await apiClient.getDashboard(user.id);
             const activeAlerts = dashboardData.active_alerts || [];
@@ -133,6 +141,13 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
     return sorted[0].value;
   };
 
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Good morning';
+    if (hour < 18) return 'Good afternoon';
+    return 'Good evening';
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'normal':
@@ -190,7 +205,24 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
         <ScrollView contentContainerStyle={[styles.scrollContent, { backgroundColor: colors.background }]}>
           {/* Header */}
           <View style={styles.header}>
-            <Text style={[styles.title, { color: colors.foreground }]}>Guardian Dashboard</Text>
+            {guardian && (
+              <View style={styles.greetingContainer}>
+                <Text 
+                  style={[styles.greeting, { color: colors.foreground }]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit={true}
+                  minimumFontScale={0.7}
+                >
+                  {getGreeting()}, {guardian.name}
+                </Text>
+                <Text style={[styles.greetingSubtext, { color: colors.mutedForeground }]}>
+                  {residents.length} {residents.length === 1 ? 'resident' : 'residents'} under your care
+                </Text>
+              </View>
+            )}
+            {!guardian && (
+              <Text style={[styles.title, { color: colors.foreground }]}>Guardian Dashboard</Text>
+            )}
 
             {/* Search Bar */}
             <View style={[styles.searchContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -253,8 +285,16 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
                       </View>
                       <View style={styles.residentInfo}>
                         <View style={styles.residentNameRow}>
-                          <View>
+                          <View style={styles.residentNameContainer}>
                             <Text style={[styles.residentName, { color: colors.foreground }]}>{resident.name}</Text>
+                            {guardian && (
+                              <View style={styles.careBadge}>
+                                <Ionicons name="heart" size={12} color={colors.primary} />
+                                <Text style={[styles.careText, { color: colors.mutedForeground }]}>
+                                  Under {guardian.name}'s care
+                                </Text>
+                              </View>
+                            )}
                             {resident.age && (
                               <Text style={[styles.residentAge, { color: colors.mutedForeground }]}>Age {resident.age}</Text>
                             )}
@@ -490,6 +530,20 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
     color: '#111827',
     marginBottom: 24,
   },
+  greetingContainer: {
+    marginBottom: 16,
+  },
+  greeting: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#111827',
+    marginBottom: 4,
+    flexShrink: 1,
+  },
+  greetingSubtext: {
+    fontSize: 14,
+    color: '#6b7280',
+  },
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -594,11 +648,26 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
     justifyContent: 'space-between',
     alignItems: 'flex-start',
   },
+  residentNameContainer: {
+    flex: 1,
+  },
   residentName: {
     fontSize: 18,
     fontWeight: '600',
     color: '#111827',
     marginBottom: 4,
+  },
+  careBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+    marginBottom: 4,
+    gap: 4,
+  },
+  careText: {
+    fontSize: 12,
+    color: '#6b7280',
+    fontStyle: 'italic',
   },
   residentAge: {
     fontSize: 14,

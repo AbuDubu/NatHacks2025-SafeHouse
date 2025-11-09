@@ -48,10 +48,12 @@ class User(Base):
     is_primary = Column(
         Boolean, default=True
     )  # Primary user (elderly person) vs caregiver
+    guardian_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # Link to guardian user
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
     alerts = relationship("Alert", back_populates="user")
+    guardian = relationship("User", remote_side=[id], foreign_keys=[guardian_id], backref="residents")
 
 
 class Sensor(Base):

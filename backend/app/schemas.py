@@ -11,10 +11,17 @@ class UserBase(BaseModel):
     email: str
     phone: Optional[str] = None
     is_primary: bool = True
+    guardian_id: Optional[int] = None
 
 
 class UserCreate(UserBase):
     pass
+
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    guardian_id: Optional[int] = None
 
 
 class User(UserBase):

@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
 from app.models import User as UserModel
-from app.schemas import UserCreate, User as UserSchema
+from app.schemas import UserCreate, User as UserSchema, UserUpdate
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -54,4 +54,55 @@ def get_user(user_id: int, db: Session = Depends(get_db)):
             detail="User not found"
         )
     return user
+
+
+@router.get("/guardian/default", response_model=UserSchema)
+def get_default_guardian(db: Session = Depends(get_db)):
+    """Get the default guardian (first non-primary user)"""
+    guardian = db.query(UserModel).filter(UserModel.is_primary == False).first()
+    if not guardian:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No guardian found"
+        )
+    return guardian
+
+
+@router.patch("/{user_id}", response_model=UserSchema)
+def update_user(user_id: int, user_update: UserUpdate, db: Session = Depends(get_db)):
+    """Update a user's information"""
+    user = db.query(UserModel).filter(UserModel.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    update_data = user_update.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(user, key, value)
+    
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.get("/guardian/{guardian_id}/residents", response_model=List[UserSchema])
+def get_guardian_residents(guardian_id: int, db: Session = Depends(get_db)):
+    """Get all residents under a specific guardian's care"""
+    # Verify guardian exists
+    guardian = db.query(UserModel).filter(UserModel.id == guardian_id).first()
+    if not guardian:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Guardian not found"
+        )
+    
+    # Get all residents (primary users) under this guardian's care
+    residents = db.query(UserModel).filter(
+        UserModel.guardian_id == guardian_id,
+        UserModel.is_primary == True
+    ).all()
+    
+    return residents
 
