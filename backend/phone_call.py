@@ -49,6 +49,162 @@ def temperature_alert():
         media_type="application/xml"
     )
 
+@app.get("/")
+def home():
+    """Simple web interface to simulate ESP32 temperature input"""
+    return Response(
+        content='''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SafeHouse Temperature Monitor</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .form-group {
+            margin: 20px 0;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        input[type="number"] {
+            width: 100%;
+            padding: 12px;
+            font-size: 18px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            box-sizing: border-box;
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            font-size: 18px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        .alert {
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+            display: none;
+        }
+        .alert.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .alert.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .info {
+            background: #e7f3ff;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+            border-left: 4px solid #2196F3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🌡️ SafeHouse Temperature Monitor</h1>
+        <div class="info">
+            <strong>Threshold:</strong> 100°F<br>
+            If temperature exceeds 100°F, the system will call you twice, then call your emergency contact.
+        </div>
+        <form id="tempForm">
+            <div class="form-group">
+                <label for="temperature">Enter Temperature (°F):</label>
+                <input type="number" id="temperature" name="temperature" step="0.1" placeholder="e.g., 105" required>
+            </div>
+            <button type="submit">Submit Temperature</button>
+        </form>
+        <div id="alert" class="alert"></div>
+    </div>
+    <script>
+        document.getElementById('tempForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const temp = document.getElementById('temperature').value;
+            const alertDiv = document.getElementById('alert');
+            
+            try {
+                const response = await fetch('/update-temperature?temperature=' + temp, {
+                    method: 'GET'
+                });
+                const data = await response.json();
+                
+                alertDiv.style.display = 'block';
+                if (data.status === 'alert_triggered') {
+                    alertDiv.className = 'alert success';
+                    alertDiv.textContent = '🚨 ALERT TRIGGERED! Temperature ' + temp + '°F exceeds threshold. Calls are being initiated...';
+                } else {
+                    alertDiv.className = 'alert success';
+                    alertDiv.textContent = '✅ Temperature ' + temp + '°F recorded. No alert needed.';
+                }
+            } catch (error) {
+                alertDiv.style.display = 'block';
+                alertDiv.className = 'alert error';
+                alertDiv.textContent = '❌ Error: ' + error.message;
+            }
+        });
+    </script>
+</body>
+</html>
+        ''',
+        media_type="text/html"
+    )
+
+@app.get("/update-temperature")
+@app.post("/update-temperature")
+def update_temperature(temperature: float):
+    """Endpoint to update temperature (for ESP32 or web interface)"""
+    temperature_threshold = 100.0
+    
+    if temperature > temperature_threshold:
+        print(f"Temperature {temperature} exceeds threshold {temperature_threshold}. Triggering alert sequence...")
+        # Trigger escalation in background
+        threading.Thread(target=escalate_calls, daemon=True).start()
+        return {
+            "status": "alert_triggered",
+            "temperature": temperature,
+            "threshold": temperature_threshold,
+            "message": "Temperature alert triggered - calls initiated"
+        }
+    else:
+        return {
+            "status": "ok",
+            "temperature": temperature,
+            "threshold": temperature_threshold,
+            "message": "Temperature within normal range"
+        }
+
 @app.get("/gather")
 @app.post("/gather")
 async def gather(request: Request):
@@ -234,7 +390,7 @@ if __name__ == "__main__":
     
     # Temperature threshold
     temperature_threshold = 100
-    current_temperature = 105  # Change this to your actual temperature reading
+    current_temperature = 99  # Change this to your actual temperature reading
     
     # Check if temperature exceeds threshold
     if current_temperature > temperature_threshold:
