@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView, ActivityIndicator, Switch } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { GuardianTrends } from './GuardianTrends';
 import { HouseTemperatureTab } from './HouseTemperatureTab';
+import { useTheme } from '../contexts/ThemeContext';
 import { apiClient, User, DashboardData, Alert, SensorReading, Sensor } from '../lib/api';
 
 interface GuardianDashboardProps {
@@ -26,12 +27,17 @@ interface Resident {
 }
 
 export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardProps) {
+  const { isDark, themeMode, setThemeMode, colors } = useTheme();
   const [activeTab, setActiveTab] = useState('home');
   const [searchQuery, setSearchQuery] = useState('');
   const [residents, setResidents] = useState<Resident[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [criticalAlert, setCriticalAlert] = useState<Alert | null>(null);
+
+  const toggleDarkMode = () => {
+    setThemeMode(isDark ? 'light' : 'dark');
+  };
 
   useEffect(() => {
     loadResidents();
@@ -179,20 +185,20 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       {activeTab === 'home' && (
-        <ScrollView contentContainerStyle={styles.scrollContent}>
+        <ScrollView contentContainerStyle={[styles.scrollContent, { backgroundColor: colors.background }]}>
           {/* Header */}
           <View style={styles.header}>
-            <Text style={styles.title}>Guardian Dashboard</Text>
+            <Text style={[styles.title, { color: colors.foreground }]}>Guardian Dashboard</Text>
 
             {/* Search Bar */}
-            <View style={styles.searchContainer}>
-              <Ionicons name="search" size={20} color="#9ca3af" style={styles.searchIcon} />
+            <View style={[styles.searchContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Ionicons name="search" size={20} color={colors.mutedForeground} style={styles.searchIcon} />
               <TextInput
-                style={styles.searchInput}
+                style={[styles.searchInput, { color: colors.foreground }]}
                 placeholder="Search residents..."
-                placeholderTextColor="#9ca3af"
+                placeholderTextColor={colors.mutedForeground}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
               />
@@ -240,7 +246,7 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
               filteredResidents.map((resident) => {
                 const statusColors = getStatusColor(resident.status);
                 return (
-                  <View key={resident.id} style={styles.residentCard}>
+                  <View key={resident.id} style={[styles.residentCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                     <View style={styles.residentHeader}>
                       <View style={styles.avatar}>
                         <Ionicons name="person" size={32} color="#2563eb" />
@@ -248,9 +254,9 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
                       <View style={styles.residentInfo}>
                         <View style={styles.residentNameRow}>
                           <View>
-                            <Text style={styles.residentName}>{resident.name}</Text>
+                            <Text style={[styles.residentName, { color: colors.foreground }]}>{resident.name}</Text>
                             {resident.age && (
-                              <Text style={styles.residentAge}>Age {resident.age}</Text>
+                              <Text style={[styles.residentAge, { color: colors.mutedForeground }]}>Age {resident.age}</Text>
                             )}
                           </View>
                           <View style={[styles.statusBadge, {
@@ -267,31 +273,31 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
 
                     {/* Vitals Grid */}
                     <View style={styles.vitalsGrid}>
-                      <View style={styles.vitalItem}>
-                        <Text style={styles.vitalLabel}>Heart Rate</Text>
-                        <Text style={styles.vitalValue}>
+                      <View style={[styles.vitalItem, { backgroundColor: colors.muted }]}>
+                        <Text style={[styles.vitalLabel, { color: colors.mutedForeground }]}>Heart Rate</Text>
+                        <Text style={[styles.vitalValue, { color: colors.foreground }]}>
                           {resident.vitals.heartRate > 0 ? `${resident.vitals.heartRate} bpm` : '--'}
                         </Text>
                       </View>
-                      <View style={styles.vitalItem}>
-                        <Text style={styles.vitalLabel}>Glucose</Text>
-                        <Text style={styles.vitalValue}>
+                      <View style={[styles.vitalItem, { backgroundColor: colors.muted }]}>
+                        <Text style={[styles.vitalLabel, { color: colors.mutedForeground }]}>Glucose</Text>
+                        <Text style={[styles.vitalValue, { color: colors.foreground }]}>
                           {resident.vitals.glucose > 0 ? `${resident.vitals.glucose} mg/dL` : '--'}
                         </Text>
                       </View>
-                      <View style={styles.vitalItem}>
-                        <Text style={styles.vitalLabel}>Sleep</Text>
-                        <Text style={styles.vitalValue}>{resident.vitals.sleep}h</Text>
+                      <View style={[styles.vitalItem, { backgroundColor: colors.muted }]}>
+                        <Text style={[styles.vitalLabel, { color: colors.mutedForeground }]}>Sleep</Text>
+                        <Text style={[styles.vitalValue, { color: colors.foreground }]}>{resident.vitals.sleep}h</Text>
                       </View>
-                      <View style={styles.vitalItem}>
-                        <Text style={styles.vitalLabel}>Activity</Text>
-                        <Text style={styles.vitalValue}>{resident.vitals.activity} steps</Text>
+                      <View style={[styles.vitalItem, { backgroundColor: colors.muted }]}>
+                        <Text style={[styles.vitalLabel, { color: colors.mutedForeground }]}>Activity</Text>
+                        <Text style={[styles.vitalValue, { color: colors.foreground }]}>{resident.vitals.activity} steps</Text>
                       </View>
                     </View>
 
                     {/* Action Button */}
-                    <TouchableOpacity style={styles.checkInButton}>
-                      <Text style={styles.checkInButtonText}>Check In</Text>
+                    <TouchableOpacity style={[styles.checkInButton, { borderColor: colors.ring }]}>
+                      <Text style={[styles.checkInButtonText, { color: colors.primary }]}>Check In</Text>
                     </TouchableOpacity>
                   </View>
                 );
@@ -309,74 +315,79 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
 
       {activeTab === 'messages' && (
         <View style={styles.emptyState}>
-          <Ionicons name="chatbubbles" size={64} color="#d1d5db" />
-          <Text style={styles.emptyStateText}>Messages coming soon</Text>
+          <Ionicons name="chatbubbles" size={64} color={colors.mutedForeground} />
+          <Text style={[styles.emptyStateText, { color: colors.mutedForeground }]}>Messages coming soon</Text>
         </View>
       )}
 
       {activeTab === 'settings' && (
         <ScrollView contentContainerStyle={styles.settingsContent}>
           <View style={styles.settingsHeader}>
-            <Text style={styles.settingsTitle}>Settings</Text>
+            <Text style={[styles.settingsTitle, { color: colors.foreground }]}>Settings</Text>
           </View>
           
           <View style={styles.settingsSection}>
-            <Text style={styles.sectionTitle}>Account</Text>
+            <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>Account</Text>
             
-            <TouchableOpacity style={styles.settingsItem}>
+            <TouchableOpacity style={[styles.settingsItem, { backgroundColor: colors.card, borderColor: colors.border }]}>
               <View style={styles.settingsItemLeft}>
-                <Ionicons name="person" size={24} color="#6b7280" />
-                <Text style={styles.settingsItemText}>Profile</Text>
+                <Ionicons name="person" size={24} color={colors.foreground} />
+                <Text style={[styles.settingsItemText, { color: colors.foreground }]}>Profile</Text>
               </View>
-              <Ionicons name="chevron-forward" size={20} color="#9ca3af" />
+              <Ionicons name="chevron-forward" size={20} color={colors.mutedForeground} />
             </TouchableOpacity>
             
-            <TouchableOpacity style={styles.settingsItem}>
+            <TouchableOpacity style={[styles.settingsItem, { backgroundColor: colors.card, borderColor: colors.border }]}>
               <View style={styles.settingsItemLeft}>
-                <Ionicons name="notifications" size={24} color="#6b7280" />
-                <Text style={styles.settingsItemText}>Notifications</Text>
+                <Ionicons name="notifications" size={24} color={colors.foreground} />
+                <Text style={[styles.settingsItemText, { color: colors.foreground }]}>Notifications</Text>
               </View>
-              <Ionicons name="chevron-forward" size={20} color="#9ca3af" />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.settingsSection}>
-            <Text style={styles.sectionTitle}>Preferences</Text>
-            
-            <TouchableOpacity style={styles.settingsItem}>
-              <View style={styles.settingsItemLeft}>
-                <Ionicons name="language" size={24} color="#6b7280" />
-                <Text style={styles.settingsItemText}>Language</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color="#9ca3af" />
-            </TouchableOpacity>
-            
-            <TouchableOpacity style={styles.settingsItem}>
-              <View style={styles.settingsItemLeft}>
-                <Ionicons name="moon" size={24} color="#6b7280" />
-                <Text style={styles.settingsItemText}>Dark Mode</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color="#9ca3af" />
+              <Ionicons name="chevron-forward" size={20} color={colors.mutedForeground} />
             </TouchableOpacity>
           </View>
 
           <View style={styles.settingsSection}>
-            <Text style={styles.sectionTitle}>About</Text>
+            <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>Preferences</Text>
             
-            <TouchableOpacity style={styles.settingsItem}>
+            <TouchableOpacity style={[styles.settingsItem, { backgroundColor: colors.card, borderColor: colors.border }]}>
               <View style={styles.settingsItemLeft}>
-                <Ionicons name="help-circle" size={24} color="#6b7280" />
-                <Text style={styles.settingsItemText}>Help & Support</Text>
+                <Ionicons name="language" size={24} color={colors.foreground} />
+                <Text style={[styles.settingsItemText, { color: colors.foreground }]}>Language</Text>
               </View>
-              <Ionicons name="chevron-forward" size={20} color="#9ca3af" />
+              <Ionicons name="chevron-forward" size={20} color={colors.mutedForeground} />
             </TouchableOpacity>
             
-            <TouchableOpacity style={styles.settingsItem}>
+            <View style={[styles.settingsItem, { backgroundColor: colors.card, borderColor: colors.border }]}>
               <View style={styles.settingsItemLeft}>
-                <Ionicons name="document-text" size={24} color="#6b7280" />
-                <Text style={styles.settingsItemText}>Terms & Privacy</Text>
+                <Ionicons name={isDark ? "moon" : "sunny"} size={24} color={colors.foreground} />
+                <Text style={[styles.settingsItemText, { color: colors.foreground }]}>Dark Mode</Text>
               </View>
-              <Ionicons name="chevron-forward" size={20} color="#9ca3af" />
+              <Switch
+                value={isDark}
+                onValueChange={toggleDarkMode}
+                trackColor={{ false: '#d1d5db', true: '#3b82f6' }}
+                thumbColor={isDark ? '#ffffff' : '#ffffff'}
+              />
+            </View>
+          </View>
+
+          <View style={styles.settingsSection}>
+            <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>About</Text>
+            
+            <TouchableOpacity style={[styles.settingsItem, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <View style={styles.settingsItemLeft}>
+                <Ionicons name="help-circle" size={24} color={colors.foreground} />
+                <Text style={[styles.settingsItemText, { color: colors.foreground }]}>Help & Support</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={colors.mutedForeground} />
+            </TouchableOpacity>
+            
+            <TouchableOpacity style={[styles.settingsItem, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <View style={styles.settingsItemLeft}>
+                <Ionicons name="document-text" size={24} color={colors.foreground} />
+                <Text style={[styles.settingsItemText, { color: colors.foreground }]}>Terms & Privacy</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={colors.mutedForeground} />
             </TouchableOpacity>
           </View>
 
@@ -393,48 +404,48 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
       )}
 
       {/* Bottom Navigation */}
-      <View style={styles.bottomNav}>
+      <View style={[styles.bottomNav, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
         <TouchableOpacity
           onPress={() => setActiveTab('home')}
           style={[styles.navItem, activeTab === 'home' && styles.navItemActive]}
         >
-          <Ionicons name="home" size={24} color={activeTab === 'home' ? '#2563eb' : '#6b7280'} />
-          <Text style={[styles.navLabel, activeTab === 'home' && styles.navLabelActive]}>Home</Text>
+          <Ionicons name="home" size={24} color={activeTab === 'home' ? colors.primary : colors.mutedForeground} />
+          <Text style={[styles.navLabel, activeTab === 'home' && { color: colors.primary }, !activeTab && { color: colors.mutedForeground }]}>Home</Text>
         </TouchableOpacity>
         <TouchableOpacity
           onPress={() => setActiveTab('trends')}
           style={[styles.navItem, activeTab === 'trends' && styles.navItemActive]}
         >
-          <Ionicons name="trending-up" size={24} color={activeTab === 'trends' ? '#2563eb' : '#6b7280'} />
-          <Text style={[styles.navLabel, activeTab === 'trends' && styles.navLabelActive]}>Trends</Text>
+          <Ionicons name="trending-up" size={24} color={activeTab === 'trends' ? colors.primary : colors.mutedForeground} />
+          <Text style={[styles.navLabel, activeTab === 'trends' && { color: colors.primary }, !activeTab && { color: colors.mutedForeground }]}>Trends</Text>
         </TouchableOpacity>
         <TouchableOpacity
           onPress={() => setActiveTab('messages')}
           style={[styles.navItem, activeTab === 'messages' && styles.navItemActive]}
         >
-          <Ionicons name="chatbubbles" size={24} color={activeTab === 'messages' ? '#2563eb' : '#6b7280'} />
-          <Text style={[styles.navLabel, activeTab === 'messages' && styles.navLabelActive]}>Messages</Text>
+          <Ionicons name="chatbubbles" size={24} color={activeTab === 'messages' ? colors.primary : colors.mutedForeground} />
+          <Text style={[styles.navLabel, activeTab === 'messages' && { color: colors.primary }, !activeTab && { color: colors.mutedForeground }]}>Messages</Text>
         </TouchableOpacity>
         <TouchableOpacity
           onPress={() => setActiveTab('temperature')}
           style={[styles.navItem, activeTab === 'temperature' && styles.navItemActive]}
         >
-          <Ionicons name="thermometer" size={24} color={activeTab === 'temperature' ? '#2563eb' : '#6b7280'} />
-          <Text style={[styles.navLabel, activeTab === 'temperature' && styles.navLabelActive]}>Temperature</Text>
+          <Ionicons name="thermometer" size={24} color={activeTab === 'temperature' ? colors.primary : colors.mutedForeground} />
+          <Text style={[styles.navLabel, activeTab === 'temperature' && { color: colors.primary }, !activeTab && { color: colors.mutedForeground }]}>Temperature</Text>
         </TouchableOpacity>
         <TouchableOpacity
           onPress={() => setActiveTab('settings')}
           style={[styles.navItem, activeTab === 'settings' && styles.navItemActive]}
         >
-          <Ionicons name="settings" size={24} color={activeTab === 'settings' ? '#2563eb' : '#6b7280'} />
-          <Text style={[styles.navLabel, activeTab === 'settings' && styles.navLabelActive]}>Settings</Text>
+          <Ionicons name="settings" size={24} color={activeTab === 'settings' ? colors.primary : colors.mutedForeground} />
+          <Text style={[styles.navLabel, activeTab === 'settings' && { color: colors.primary }, !activeTab && { color: colors.mutedForeground }]}>Settings</Text>
         </TouchableOpacity>
       </View>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+  const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f9fafb',
@@ -482,10 +493,10 @@ const styles = StyleSheet.create({
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ffffff',
     borderRadius: 999,
     paddingHorizontal: 16,
     height: 48,
+    borderWidth: 1,
   },
   searchIcon: {
     marginRight: 12,
@@ -676,11 +687,7 @@ const styles = StyleSheet.create({
   },
   navLabel: {
     fontSize: 12,
-    color: '#6b7280',
     marginTop: 4,
-  },
-  navLabelActive: {
-    color: '#2563eb',
   },
   settingsContent: {
     padding: 24,
@@ -711,11 +718,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 16,
     paddingHorizontal: 16,
-    backgroundColor: '#ffffff',
     borderRadius: 12,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
   },
   settingsItemLeft: {
     flexDirection: 'row',
