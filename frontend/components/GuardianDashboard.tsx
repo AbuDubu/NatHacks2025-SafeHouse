@@ -5,6 +5,7 @@ import { GuardianTrends } from './GuardianTrends';
 import { HouseTemperatureTab } from './HouseTemperatureTab';
 import { useTheme } from '../contexts/ThemeContext';
 import { apiClient, User, DashboardData, Alert, SensorReading, Sensor } from '../lib/api';
+import { generateHealthInsights, Insight } from '../lib/healthInsights';
 
 interface GuardianDashboardProps {
   onEmergency: (context?: { residentName?: string; alertType?: string }) => void;
@@ -24,6 +25,7 @@ interface Resident {
     activity: number;
   };
   dashboardData?: DashboardData;
+  insights?: Insight[];
 }
 
 export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardProps) {
@@ -103,6 +105,7 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
                 activity: 5432, // Placeholder
               },
               dashboardData,
+              insights: generateHealthInsights(dashboardData).filter(insight => insight.notifyGuardian),
             };
           } catch (err) {
             console.error(`Error loading dashboard for user ${user.id}:`, err);
@@ -334,6 +337,41 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
                         <Text style={[styles.vitalValue, { color: colors.foreground }]}>{resident.vitals.activity} steps</Text>
                       </View>
                     </View>
+
+                    {resident.insights && resident.insights.length > 0 && (
+                      <View style={styles.guardianInsightsSection}>
+                        {resident.insights.map((insight) => (
+                          <View
+                            key={insight.id}
+                            style={[
+                              styles.guardianInsightCard,
+                              insight.severity === 'critical'
+                                ? styles.guardianInsightCritical
+                                : styles.guardianInsightWarning,
+                            ]}
+                          >
+                            <View style={styles.guardianInsightHeader}>
+                              <Ionicons
+                                name={insight.severity === 'critical' ? 'warning' : 'alert-circle'}
+                                size={16}
+                                color={insight.severity === 'critical' ? '#991b1b' : '#854d0e'}
+                              />
+                              <Text
+                                style={[
+                                  styles.guardianInsightTitle,
+                                  insight.severity === 'critical'
+                                    ? styles.guardianInsightTitleCritical
+                                    : styles.guardianInsightTitleWarning,
+                                ]}
+                              >
+                                {insight.title}
+                              </Text>
+                            </View>
+                            <Text style={styles.guardianInsightMessage}>{insight.message}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
 
                     {/* Action Button */}
                     <TouchableOpacity style={[styles.checkInButton, { borderColor: colors.ring }]}>
@@ -716,6 +754,43 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
   checkInButtonText: {
     color: '#2563eb',
     fontWeight: '500',
+  },
+  guardianInsightsSection: {
+    marginTop: 12,
+    gap: 12,
+  },
+  guardianInsightCard: {
+    padding: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+  },
+  guardianInsightWarning: {
+    backgroundColor: '#fef3c7',
+    borderColor: '#fcd34d',
+  },
+  guardianInsightCritical: {
+    backgroundColor: '#fee2e2',
+    borderColor: '#fca5a5',
+  },
+  guardianInsightHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  guardianInsightTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  guardianInsightTitleWarning: {
+    color: '#b45309',
+  },
+  guardianInsightTitleCritical: {
+    color: '#b91c1c',
+  },
+  guardianInsightMessage: {
+    fontSize: 13,
+    color: '#4b5563',
   },
   emptyState: {
     flex: 1,

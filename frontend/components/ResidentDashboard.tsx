@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { apiClient, DashboardData, SensorReading, Alert } from '../lib/api';
+import { apiClient, DashboardData, SensorReading } from '../lib/api';
+import { generateHealthInsights, Insight } from '../lib/healthInsights';
 
 interface ResidentDashboardProps {
   name: string;
@@ -32,6 +33,8 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
     message: '',
     confirmed: false,
   });
+  const [insights, setInsights] = useState<Insight[]>([]);
+  const [activeEmergencyInsight, setActiveEmergencyInsight] = useState<Insight | null>(null);
 
   useEffect(() => {
     loadDashboardData();
@@ -61,6 +64,13 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
           alertId: alertToShow.id,
         });
       }
+
+      const generatedInsights = generateHealthInsights(data);
+      setInsights(generatedInsights);
+      const emergency = generatedInsights.find(
+        (insight) => insight.tags?.includes('fall') && insight.severity === 'critical',
+      );
+      setActiveEmergencyInsight(emergency ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load dashboard data');
       console.error('Error loading dashboard:', err);
@@ -209,6 +219,38 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
 
   return (
     <View style={styles.container}>
+      {activeEmergencyInsight && (
+        <View style={styles.emergencyOverlay}>
+          <View style={styles.emergencyModal}>
+            <View style={styles.emergencyIcon}>
+              <Ionicons name="warning" size={48} color="#dc2626" />
+            </View>
+            <Text style={styles.emergencyTitle}>{activeEmergencyInsight.title}</Text>
+            <Text style={styles.emergencyMessage}>
+              {activeEmergencyInsight.message || 'We detected a potential emergency situation.'}
+            </Text>
+            <View style={styles.emergencyActions}>
+              <TouchableOpacity
+                style={styles.emergencyDismissButton}
+                onPress={() => setActiveEmergencyInsight(null)}
+              >
+                <Text style={styles.emergencyDismissText}>Dismiss</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.emergencyCallButton}
+                onPress={() => {
+                  setActiveEmergencyInsight(null);
+                  onEmergency();
+                }}
+              >
+                <Ionicons name="call" size={16} color="#ffffff" />
+                <Text style={styles.emergencyCallText}>Contact Emergency</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
+
       <ScrollView contentContainerStyle={styles.scrollContent}>
         {/* Header */}
         <View style={styles.header}>
@@ -259,6 +301,79 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
                 <Text style={styles.confirmButtonText}>Confirm Action</Text>
               </TouchableOpacity>
             )}
+          </View>
+        )}
+
+        {/* Health Insights */}
+        {insights.length > 0 && (
+          <View style={styles.insightsSection}>
+            <Text style={styles.insightsTitle}>Suggestions for Today</Text>
+            {insights.map((insight) => (
+              <View
+                key={insight.id}
+                style={[
+                  styles.insightCard,
+                  insight.severity === 'critical'
+                    ? styles.insightCardCritical
+                    : insight.severity === 'warning'
+                      ? styles.insightCardWarning
+                      : styles.insightCardInfo,
+                ]}
+              >
+                <View style={styles.insightHeader}>
+                  <Ionicons
+                    name={
+                      insight.severity === 'critical'
+                        ? 'warning'
+                        : insight.severity === 'warning'
+                          ? 'alert-circle'
+                        : 'bulb-outline'
+                    }
+                    size={20}
+                    color={
+                      insight.severity === 'critical'
+                        ? '#991b1b'
+                        : insight.severity === 'warning'
+                          ? '#854d0e'
+                          : '#2563eb'
+                    }
+                  />
+                  <Text
+                    style={[
+                      styles.insightTitle,
+                      insight.severity === 'critical'
+                        ? styles.insightTitleCritical
+                        : insight.severity === 'warning'
+                          ? styles.insightTitleWarning
+                          : styles.insightTitleInfo,
+                    ]}
+                  >
+                    {insight.title}
+                  </Text>
+                </View>
+                <Text style={styles.insightMessage}>{insight.message}</Text>
+                {insight.actions && insight.actions.length > 0 && (
+                  <View style={styles.insightActions}>
+                    {insight.actions.map((action) => (
+                      <Text key={action} style={styles.insightActionItem}>
+                        • {action}
+                      </Text>
+                    ))}
+                  </View>
+                )}
+                {insight.notifyGuardian && (
+                  <View style={styles.guardianBadge}>
+                    <Ionicons name="notifications" size={14} color="#1d4ed8" />
+                    <Text style={styles.guardianBadgeText}>Guardian notified</Text>
+                  </View>
+                )}
+                {insight.severity === 'critical' && (
+                  <TouchableOpacity style={styles.insightPrimaryButton}>
+                    <Text style={styles.insightPrimaryButtonText}>View Options</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ))}
           </View>
         )}
 
@@ -423,6 +538,168 @@ const styles = StyleSheet.create({
   confirmButtonText: {
     color: '#ffffff',
     fontSize: 16,
+    fontWeight: '600',
+  },
+  insightsSection: {
+    marginBottom: 24,
+    gap: 16,
+  },
+  insightsTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  insightCard: {
+    padding: 20,
+    borderRadius: 20,
+    borderWidth: 2,
+    gap: 8,
+  },
+  insightCardInfo: {
+    backgroundColor: '#eff6ff',
+    borderColor: '#bfdbfe',
+  },
+  insightCardWarning: {
+    backgroundColor: '#fefce8',
+    borderColor: '#fde047',
+  },
+  insightCardCritical: {
+    backgroundColor: '#fef2f2',
+    borderColor: '#fca5a5',
+  },
+  insightHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  insightTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  insightTitleInfo: {
+    color: '#1d4ed8',
+  },
+  insightTitleWarning: {
+    color: '#b45309',
+  },
+  insightTitleCritical: {
+    color: '#b91c1c',
+  },
+  insightMessage: {
+    fontSize: 14,
+    color: '#374151',
+  },
+  insightActions: {
+    marginTop: 4,
+    gap: 4,
+  },
+  insightActionItem: {
+    fontSize: 13,
+    color: '#4b5563',
+  },
+  insightPrimaryButton: {
+    marginTop: 12,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#dc2626',
+    borderRadius: 999,
+  },
+  insightPrimaryButtonText: {
+    color: '#ffffff',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  guardianBadge: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    gap: 6,
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#e0e7ff',
+    borderRadius: 999,
+  },
+  guardianBadgeText: {
+    color: '#1d4ed8',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  emergencyOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    zIndex: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  emergencyModal: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    padding: 28,
+    alignItems: 'center',
+    gap: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2,
+    shadowRadius: 16,
+    elevation: 12,
+  },
+  emergencyIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#fee2e2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emergencyTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#b91c1c',
+    textAlign: 'center',
+  },
+  emergencyMessage: {
+    fontSize: 15,
+    color: '#4b5563',
+    textAlign: 'center',
+  },
+  emergencyActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  emergencyDismissButton: {
+    flex: 1,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#cbd5f5',
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emergencyDismissText: {
+    color: '#1d4ed8',
+    fontWeight: '600',
+  },
+  emergencyCallButton: {
+    flex: 1,
+    borderRadius: 16,
+    backgroundColor: '#dc2626',
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  emergencyCallText: {
+    color: '#ffffff',
     fontWeight: '600',
   },
   vitalsGrid: {
