@@ -10,14 +10,16 @@ interface TemperatureSensor {
 }
 
 export function HouseTemperatureTab() {
+  console.log('HouseTemperatureTab rendered');
   const [temperatureSensors, setTemperatureSensors] = useState<TemperatureSensor[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     loadTemperatureData();
+    console.log('Loading temperature data');
     // Refresh every 30 seconds
-    const interval = setInterval(loadTemperatureData, 30000);
+    const interval = setInterval(loadTemperatureData, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -37,7 +39,9 @@ export function HouseTemperatureTab() {
         tempSensors.map(async (sensor) => {
           try {
             const readings = await apiClient.getSensorReadings(sensor.id, { limit: 1 });
+            console.log('Readings:', readings);
             const latestReading = readings.length > 0 ? readings[0] : null;
+            console.log('Latest reading:', latestReading);
             
             // Determine status
             let status: 'active' | 'inactive' | 'warning' | 'critical' = 'inactive';
@@ -66,7 +70,7 @@ export function HouseTemperatureTab() {
             return {
               sensor,
               latestReading: null,
-              status: sensor.is_active ? 'active' : 'inactive' as const,
+              status: (sensor.is_active ? 'active' : 'inactive') as 'active' | 'inactive',
             };
           }
         })
@@ -113,7 +117,7 @@ export function HouseTemperatureTab() {
 
   const formatTemperature = (value: number | null): string => {
     if (value === null) return '--';
-    return `${Math.round(value)}°C`;
+    return `${Math.round(value)}`;
   };
 
   const formatLastSeen = (timestamp: string | null | undefined): string => {

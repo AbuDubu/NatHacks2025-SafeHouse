@@ -94,8 +94,6 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
             // Extract vitals from readings - use same extraction logic as Resident Dashboard
             // Guardian sees resident's health metrics synced from Apple Health to database
             const readings = dashboardData.recent_readings || [];
-            const heartRate = getLatestReading(readings, 'heart_rate') || 0;
-            const glucose = getLatestReading(readings, 'glucose') || 0;
             
             // Extract vitals using the same method as Resident Dashboard
             // This ensures metrics match between resident and guardian views
