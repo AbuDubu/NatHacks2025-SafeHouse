@@ -72,6 +72,19 @@ async def health_check():
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler"""
+    # For Twilio webhooks, return TwiML XML instead of JSON
+    if "/phone-calls/" in str(request.url):
+        from fastapi.responses import Response
+        import traceback
+        print(f"❌ Error in phone-calls endpoint: {exc}")
+        traceback.print_exc()
+        twiml = '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">An error occurred. Please try again later.</Say><Hangup/></Response>'
+        return Response(
+            content=twiml,
+            media_type="application/xml",
+            headers={"Content-Type": "application/xml; charset=utf-8"}
+        )
+    
     return JSONResponse(
         status_code=500,
         content={
