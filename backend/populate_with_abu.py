@@ -2,6 +2,13 @@
 """
 Populate database with extensive sample data
 Creates lots of users, sensors, readings, and alerts for demo purposes
+
+Schema Compliance:
+- Sensor types must match SensorType enum: temperature, humidity, motion, smoke, co2,
+  heart_rate, fall_detection, door, water_leak
+- Sensor creation does NOT include user_id (removed from schema)
+- Bulk readings do NOT include user_id (removed from schema)
+- All sensor types must be lowercase to match enum values
 """
 
 import requests
@@ -164,6 +171,7 @@ def main():
     print(f"  📊 Created/updated {created_users} new users\n")
     
     # Create many sensors across different locations
+    # NOTE: Only using valid SensorType enum values (no STEP_COUNT, GLUCOSE, SLEEP, etc.)
     print("📡 Creating sensors...")
     locations = ["Living Room", "Bedroom"]
     sensor_types = [

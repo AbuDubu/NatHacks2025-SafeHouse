@@ -58,14 +58,115 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
     return () => clearInterval(interval);
   }, []);
 
+  const syncHealthDataToBackend = async (metrics: {
+    heartRate: number;
+    steps: number;
+    sleepHours: number;
+    sleepWeeklyAverage: number;
+    bloodGlucose: number;
+  }) => {
+    try {
+      // Get the actual user from database
+      let actualUserName = name;
+      try {
+        const user = await apiClient.getPrimaryUser();
+        actualUserName = user.name;
+      } catch (err) {
+        console.log('⚠️ Could not get user for device ID:', err);
+      }
+      
+      // Use a device ID based on the actual user's name from database
+      const deviceId = `health-${actualUserName.toLowerCase().replace(/\s+/g, '-')}`;
+      
+      // Get existing sensors for this device
+      const existingSensors = await apiClient.getSensors();
+      const deviceSensors = existingSensors.filter(s => s.device_id === deviceId);
+      const existingSensorTypes = new Set(deviceSensors.map(s => (s.sensor_type || '').toLowerCase()));
+      
+      // Create sensors that don't exist yet
+      const sensorTypes = [
+        { type: 'heart_rate', name: 'Heart Rate Monitor', unit: 'bpm' },
+        { type: 'glucose', name: 'Blood Glucose Monitor', unit: 'mg/dL' },
+        { type: 'sleep', name: 'Sleep Tracker', unit: 'hours' },
+        { type: 'step_count', name: 'Step Counter', unit: 'steps' },
+      ];
+      
+      for (const { type, name: sensorName } of sensorTypes) {
+        if (!existingSensorTypes.has(type.toLowerCase())) {
+          try {
+            await apiClient.createSensor(deviceId, sensorName, type, 'Apple Health');
+            console.log(`✅ Created ${type} sensor for ${actualUserName}`);
+          } catch (err: any) {
+            if (err?.message?.includes('already exists')) {
+              console.log(`ℹ️ ${type} sensor already exists`);
+            } else {
+              console.log(`⚠️ Could not create ${type} sensor:`, err?.message || err);
+            }
+          }
+        }
+      }
+      
+      // Prepare readings to sync - sync ALL health metrics
+      const readings: Array<{ sensor_type: string; value: number; unit?: string }> = [];
+      
+      // Sync heart rate
+      if (metrics.heartRate > 0) {
+        readings.push({
+          sensor_type: 'heart_rate',
+          value: metrics.heartRate,
+          unit: 'bpm',
+        });
+      }
+      
+      // Sync glucose
+      if (metrics.bloodGlucose > 0) {
+        readings.push({
+          sensor_type: 'glucose',
+          value: metrics.bloodGlucose,
+          unit: 'mg/dL',
+        });
+      }
+      
+      // Sync sleep (weekly average)
+      if (metrics.sleepWeeklyAverage > 0) {
+        readings.push({
+          sensor_type: 'sleep',
+          value: metrics.sleepWeeklyAverage,
+          unit: 'hours',
+        });
+      }
+      
+      // Sync steps
+      if (metrics.steps > 0) {
+        readings.push({
+          sensor_type: 'step_count',
+          value: metrics.steps,
+          unit: 'steps',
+        });
+      }
+      
+      // Sync readings if we have any
+      if (readings.length > 0) {
+        await apiClient.syncHealthReadings(deviceId, readings);
+        console.log('✅ Synced Apple Health data to backend for guardian visibility');
+      }
+    } catch (err) {
+      // Silently fail - don't block the UI if sync fails
+      console.log('Note: Could not sync health data to backend:', err);
+    }
+  };
+
   const loadDashboardData = async () => {
     try {
       setLoading(true);
       setError(null);
       
-      // Load Apple Health data (local only - not synced to database)
+      // Load Apple Health data and sync to database so guardian can see it
       const metrics = await getLatestHealthMetrics();
       setHealthMetrics(metrics);
+      
+      // Sync Apple Health data to backend so guardian can see resident's vitals
+      await syncHealthDataToBackend(metrics);
       
       const data = await apiClient.getDashboard();
       setDashboardData(data);
@@ -190,22 +291,23 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
       });
     }
 
-    // Sleep Quality (from Apple Health)
-    if (sleepHours > 0) {
+    // Sleep Quality (from Apple Health - weekly average)
+    const sleepWeeklyAvg = healthMetrics?.sleepWeeklyAverage || 0;
+    if (sleepWeeklyAvg > 0) {
       vitals.push({
         icon: 'moon-outline',
         label: 'Sleep Quality',
-        value: sleepHours.toFixed(1),
-        unit: 'hours',
-        status: sleepHours < 6 || sleepHours > 9 ? 'warning' : 'normal',
-        color: sleepHours < 6 || sleepHours > 9 ? 'yellow' : 'green',
+        value: sleepWeeklyAvg.toFixed(1),
+        unit: 'hours weekly average',
+        status: sleepWeeklyAvg < 6 || sleepWeeklyAvg > 9 ? 'warning' : 'normal',
+        color: sleepWeeklyAvg < 6 || sleepWeeklyAvg > 9 ? 'yellow' : 'green',
       });
     } else {
       vitals.push({
         icon: 'moon-outline',
         label: 'Sleep Quality',
         value: '--',
-        unit: 'hours',
+        unit: 'hours weekly average',
         status: 'normal',
         color: 'green',
       });
