@@ -1,4 +1,4 @@
-package com.safehaven.app
+package com.nathacks2025.safehouse
 
 import android.app.Application
 import android.content.res.Configuration

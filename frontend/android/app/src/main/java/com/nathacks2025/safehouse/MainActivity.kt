@@ -1,4 +1,4 @@
-package com.safehaven.app
+package com.nathacks2025.safehouse
 
 import android.os.Build
 import android.os.Bundle
