@@ -77,10 +77,10 @@ def make_emergency_call(request: EmergencyCallRequest):
     alert_info = f" ({request.alert_type})" if request.alert_type else ""
     
     try:
-        # Make the call using the emergency endpoint
-        # Note: The router prefix is /phone-calls and main app prefix is /api, so full path is /api/phone-calls/emergency
+        # Make the call using the emergency webhook endpoint
+        # Note: The router prefix is /phone-calls and main app prefix is /api, so full path is /api/phone-calls/emergency-webhook
         call = client.calls.create(
-            url=f"{ngrok_url}/api/phone-calls/emergency",
+            url=f"{ngrok_url}/api/phone-calls/emergency-webhook",
             to=to_number,
             from_=twilio_phone
         )
@@ -206,10 +206,10 @@ def voice():
     )
 
 
-@router.get("/emergency")
-@router.post("/emergency")
-async def emergency(request: Request):
-    """Twilio webhook for emergency calls"""
+@router.get("/emergency-webhook")
+@router.post("/emergency-webhook")
+async def emergency_webhook(request: Request):
+    """Twilio webhook for emergency calls - handles form-encoded data from Twilio"""
     try:
         print("📞 Emergency webhook called by Twilio")
         twiml = '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">This is an emergency call from SafeHouse. The user has triggered an emergency alert. Please check on them immediately.</Say><Hangup/></Response>'
@@ -288,7 +288,7 @@ async def temperature_response(request: Request):
             if client and abus_number:
                 try:
                     emergency_call = client.calls.create(
-                        url=f"{ngrok_url}/api/phone-calls/emergency",
+                        url=f"{ngrok_url}/api/phone-calls/emergency-webhook",
                         to=abus_number,
                         from_=twilio_phone
                     )
@@ -334,7 +334,7 @@ async def gather(request: Request):
             if client and abus_number:
                 try:
                     emergency_call = client.calls.create(
-                        url=f"{ngrok_url}/api/phone-calls/emergency",
+                        url=f"{ngrok_url}/api/phone-calls/emergency-webhook",
                         to=abus_number,
                         from_=twilio_phone
                     )
