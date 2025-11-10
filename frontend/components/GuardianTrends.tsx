@@ -103,22 +103,7 @@ export function GuardianTrends() {
             }],
           });
         } else {
-          // Try to get from backend sensor data
-          const glucoseSensors = await apiClient.getSensors({ sensor_type: 'blood_glucose' });
-          if (glucoseSensors.length > 0) {
-            const readings = await apiClient.getSensorReadings(glucoseSensors[0].id, { hours: daysAgo * 24 });
-            const dailyFromBackend = processReadingsForChart(readings, labels, daysAgo);
-            if (dailyFromBackend.some(val => val > 0)) {
-              setGlucoseData({
-                labels,
-                datasets: [{
-                  data: dailyFromBackend,
-                  color: (opacity = 1) => `rgba(59, 130, 246, ${opacity})`,
-                  strokeWidth: 2,
-                }],
-              });
-            }
-          }
+          // Apple Health data only - no backend fallback
         }
       } catch (err) {
         console.error('Error loading glucose data:', err);
@@ -141,22 +126,7 @@ export function GuardianTrends() {
             }],
           });
         } else {
-          // Try to get from backend sensor data
-          const sleepSensors = await apiClient.getSensors({ sensor_type: 'sleep' });
-          if (sleepSensors.length > 0) {
-            const readings = await apiClient.getSensorReadings(sleepSensors[0].id, { hours: daysAgo * 24 });
-            const dailyFromBackend = processReadingsForChart(readings, labels, daysAgo);
-            if (dailyFromBackend.some(val => val > 0)) {
-              setSleepData({
-                labels,
-                datasets: [{
-                  data: dailyFromBackend,
-                  color: (opacity = 1) => `rgba(139, 92, 246, ${opacity})`,
-                  strokeWidth: 3,
-                }],
-              });
-            }
-          }
+          // Apple Health data only - no backend fallback
         }
       } catch (err) {
         console.error('Error loading sleep data:', err);
@@ -179,25 +149,7 @@ export function GuardianTrends() {
             }],
           });
         } else {
-          // Try to get from backend sensor data (activity or step_count)
-          const activitySensors = await apiClient.getSensors({ sensor_type: 'activity' });
-          const stepSensors = await apiClient.getSensors({ sensor_type: 'step_count' });
-          const sensorsToUse = activitySensors.length > 0 ? activitySensors : stepSensors;
-          
-          if (sensorsToUse.length > 0) {
-            const readings = await apiClient.getSensorReadings(sensorsToUse[0].id, { hours: daysAgo * 24 });
-            const dailyFromBackend = processReadingsForChart(readings, labels, daysAgo);
-            if (dailyFromBackend.some(val => val > 0)) {
-              setActivityData({
-                labels,
-                datasets: [{
-                  data: dailyFromBackend,
-                  color: (opacity = 1) => `rgba(16, 185, 129, ${opacity})`,
-                  strokeWidth: 2,
-                }],
-              });
-            }
-          }
+          // Apple Health data only - no backend fallback
         }
       } catch (err) {
         console.error('Error loading activity data:', err);

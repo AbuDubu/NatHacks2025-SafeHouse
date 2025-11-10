@@ -63,7 +63,7 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
       setLoading(true);
       setError(null);
       
-      // Load Apple Health data
+      // Load Apple Health data and sync to database so guardian can see it
       const metrics = await getLatestHealthMetrics();
       setHealthMetrics(metrics);
       
@@ -190,15 +190,16 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
       });
     }
 
-    // Sleep Quality (from Apple Health)
-    if (sleepHours > 0) {
+    // Sleep Quality (from Apple Health - weekly average)
+    const sleepWeeklyAvg = healthMetrics?.sleepWeeklyAverage || 0;
+    if (sleepWeeklyAvg > 0) {
       vitals.push({
         icon: 'moon-outline',
         label: 'Sleep Quality',
-        value: sleepHours.toFixed(1),
-        unit: 'hours',
-        status: sleepHours < 6 || sleepHours > 9 ? 'warning' : 'normal',
-        color: sleepHours < 6 || sleepHours > 9 ? 'yellow' : 'green',
+        value: sleepWeeklyAvg.toFixed(1),
+        unit: 'hours weekly average',
+        status: sleepWeeklyAvg < 6 || sleepWeeklyAvg > 9 ? 'warning' : 'normal',
+        color: sleepWeeklyAvg < 6 || sleepWeeklyAvg > 9 ? 'yellow' : 'green',
       });
     } else {
       vitals.push({

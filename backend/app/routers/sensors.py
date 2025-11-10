@@ -130,7 +130,7 @@ def create_reading(reading: SensorReadingCreate, db: Session = Depends(get_db)):
 
 @router.post("/readings/bulk", response_model=DataResponse)
 def create_bulk_readings(bulk_data: SensorReadingBulkCreate, db: Session = Depends(get_db)):
-    """Hardware endpoint: Send multiple readings at once"""
+    """Hardware endpoint: Send multiple readings at once. Auto-creates sensors if they don't exist."""
     # Find all sensors for this device
     sensors = db.query(Sensor).filter(Sensor.device_id == bulk_data.device_id).all()
     
@@ -143,13 +143,61 @@ def create_bulk_readings(bulk_data: SensorReadingBulkCreate, db: Session = Depen
     # Create a map of sensor_type to sensor
     sensor_map = {s.sensor_type: s for s in sensors}
     
-    readings_created = 0
+    # Auto-create sensors for readings that don't have a sensor yet
     for reading_data in bulk_data.readings:
-        sensor_type = reading_data.get("sensor_type")
-        if sensor_type not in sensor_map:
+        sensor_type_str = reading_data.get("sensor_type")
+        if not sensor_type_str:
+            continue
+            
+        # Check if sensor type is valid
+        try:
+            sensor_type_enum = SensorType(sensor_type_str.lower())
+        except ValueError:
+            # Invalid sensor type, skip this reading
             continue
         
-        sensor = sensor_map[sensor_type]
+        # If sensor doesn't exist for this type, create it
+        if sensor_type_enum not in sensor_map:
+            try:
+                # Generate a name based on sensor type
+                sensor_name_map = {
+                    SensorType.HEART_RATE: "Heart Rate Monitor",
+                    SensorType.GLUCOSE: "Blood Glucose Monitor",
+                    SensorType.SLEEP: "Sleep Tracker",
+                    SensorType.STEP_COUNT: "Step Counter",
+                }
+                sensor_name = sensor_name_map.get(sensor_type_enum, f"{sensor_type_str.title()} Sensor")
+                
+                new_sensor = Sensor(
+                    device_id=bulk_data.device_id,
+                    name=sensor_name,
+                    sensor_type=sensor_type_enum,
+                    location="Apple Health",
+                    is_active=True
+                )
+                db.add(new_sensor)
+                db.flush()  # Flush to get the ID
+                sensor_map[sensor_type_enum] = new_sensor
+                print(f"✅ Auto-created sensor: {sensor_name} ({sensor_type_str}) for device {bulk_data.device_id}")
+            except Exception as e:
+                print(f"⚠️ Could not auto-create sensor {sensor_type_str}: {e}")
+                continue
+    
+    readings_created = 0
+    for reading_data in bulk_data.readings:
+        sensor_type_str = reading_data.get("sensor_type")
+        if not sensor_type_str:
+            continue
+            
+        try:
+            sensor_type_enum = SensorType(sensor_type_str.lower())
+        except ValueError:
+            continue
+        
+        if sensor_type_enum not in sensor_map:
+            continue
+        
+        sensor = sensor_map[sensor_type_enum]
         sensor.last_seen = datetime.utcnow()
         
         db_reading = SensorReading(
