@@ -40,7 +40,6 @@ class SensorBase(BaseModel):
     sensor_type: SensorType
     location: Optional[str] = None
     is_active: bool = True
-    user_id: Optional[int] = None  # Link sensor to user (for health data)
 
 
 class SensorCreate(SensorBase):
@@ -76,7 +75,6 @@ class SensorReadingCreate(SensorReadingBase):
 class SensorReadingBulkCreate(BaseModel):
     """For hardware to send multiple readings at once"""
     device_id: str
-    user_id: Optional[int] = None  # Optional user_id to associate health sensors with user
     readings: list[dict]  # [{"sensor_type": "temperature", "value": 22.5, "unit": "°C"}]
 
 

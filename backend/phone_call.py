@@ -13,7 +13,7 @@ import statistics
 
 # Database imports
 from app.database import SessionLocal, init_db
-from app.models import Sensor, SensorReading, SensorType
+from app.models import Sensor, SensorReading, SensorType, User
 
 load_dotenv()
 
@@ -101,16 +101,25 @@ async def temperature_response(request: Request):
     elif digits == "2":
         # User pressed 2 - needs emergency assistance
         print("User requested emergency assistance (pressed 2)")
-        # Trigger emergency call to Abu in background
+        # Trigger emergency call to guardian in background
         def call_emergency():
             if client:
                 try:
-                    emergency_call = client.calls.create(
-                        url=f"{NGROK_URL}/emergency",
-                        to=os.getenv("ABUS_NUMBER"),
-                        from_=os.getenv("TWILIO_PHONE_NUMBER")
-                    )
-                    print(f"Emergency call to Abu initiated: {emergency_call.sid}")
+                    db = SessionLocal()
+                    try:
+                        guardian_phone = get_guardian_phone(db)
+                        if not guardian_phone:
+                            print("ERROR: No guardian phone number found in database or .env")
+                            return
+                        print(f"🚨 EMERGENCY (temperature-response): Calling guardian at {guardian_phone} (should be Abubakar, not Hrishi)")
+                        emergency_call = client.calls.create(
+                            url=f"{NGROK_URL}/emergency",
+                            to=guardian_phone,
+                            from_=os.getenv("TWILIO_PHONE_NUMBER")
+                        )
+                        print(f"✅ Emergency call to guardian ({guardian_phone}) initiated: {emergency_call.sid}")
+                    finally:
+                        db.close()
                 except Exception as e:
                     print(f"Error calling emergency number: {e}")
         
@@ -353,6 +362,27 @@ def get_recent_temperature_readings(db: Session, sensor_id: int, before_reading_
     
     return readings
 
+def get_primary_user_phone(db: Session) -> str:
+    """Get the primary user's (resident's) phone number from database"""
+    primary_user = db.query(User).filter(User.is_primary == True).first()
+    if primary_user:
+        print(f"📞 Primary user phone: {primary_user.name} -> {primary_user.phone}")
+        if primary_user.phone:
+            return primary_user.phone
+    # Fallback to environment variable if not in database
+    fallback = os.getenv("MY_PHONE_NUMBER", "")
+    print(f"⚠️ Using fallback phone from MY_PHONE_NUMBER env var: {fallback}")
+    return fallback
+
+def get_guardian_phone(db: Session) -> str:
+    """Get the guardian's phone number from ABUS_NUMBER environment variable"""
+    guardian_phone = os.getenv("ABUS_NUMBER", "")
+    if guardian_phone:
+        print(f"📞 Using guardian phone from ABUS_NUMBER env var: {guardian_phone}")
+    else:
+        print("⚠️ WARNING: ABUS_NUMBER not set in .env file")
+    return guardian_phone
+
 def calculate_z_score(value: float, mean: float, std_dev: float) -> float:
     """Calculate Z-score for a value"""
     if std_dev == 0:
@@ -465,7 +495,12 @@ def check_and_alert_anomaly(reading: SensorReading, db: Session):
     
     if anomaly_result.get("is_anomaly"):
         # Send SMS warning to user
-        my_number = os.getenv("MY_PHONE_NUMBER")
+        db = SessionLocal()
+        try:
+            my_number = get_primary_user_phone(db)
+        finally:
+            db.close()
+        
         if my_number:
             z_score = anomaly_result["z_score"]
             current_temp = anomaly_result["current_value"]
@@ -535,8 +570,14 @@ def check_temperature_and_alert(temperature: float, reading_id: int = None):
         # WARNING: Temperature is near threshold - send SMS alerts
         print(f"WARNING! Temperature {temperature}°F is near threshold (warning at {WARNING_THRESHOLD}°F). Sending SMS alerts...")
         
-        my_number = os.getenv("MY_PHONE_NUMBER")
-        abus_number = os.getenv("ABUS_NUMBER")
+        db = SessionLocal()
+        try:
+            my_number = get_primary_user_phone(db)
+            abus_number = get_guardian_phone(db)
+            primary_user_name = db.query(User).filter(User.is_primary == True).first()
+            user_name = primary_user_name.name if primary_user_name else "User"
+        finally:
+            db.close()
         
         warning_message = f"SafeHouse Alert: Temperature is {temperature}°F (threshold: {TEMPERATURE_THRESHOLD}°F). Please monitor your home."
         
@@ -547,9 +588,9 @@ def check_temperature_and_alert(temperature: float, reading_id: int = None):
                 daemon=True
             ).start()
         
-        # Send SMS to emergency contact
+        # Send SMS to emergency contact (guardian)
         if abus_number:
-            emergency_message = f"SafeHouse Alert: {os.getenv('MY_PHONE_NUMBER', 'User')}'s home temperature is {temperature}°F (approaching danger threshold of {TEMPERATURE_THRESHOLD}°F). Please check on them."
+            emergency_message = f"SafeHouse Alert: {user_name}'s home temperature is {temperature}°F (approaching danger threshold of {TEMPERATURE_THRESHOLD}°F). Please check on them."
             threading.Thread(
                 target=lambda: send_sms(abus_number, emergency_message),
                 daemon=True
@@ -618,12 +659,21 @@ async def gather(request: Request):
         def make_emergency_call():
             if client:
                 try:
-                    emergency_call = client.calls.create(
-                        url=f"{NGROK_URL}/emergency",
-                        to=os.getenv("ABUS_NUMBER"),
-                        from_=os.getenv("TWILIO_PHONE_NUMBER")
-                    )
-                    print(f"Emergency call initiated: {emergency_call.sid}")
+                    db = SessionLocal()
+                    try:
+                        guardian_phone = get_guardian_phone(db)
+                        if not guardian_phone:
+                            print("ERROR: No guardian phone number found in database or .env")
+                            return
+                        print(f"🚨 EMERGENCY (temperature-response): Calling guardian at {guardian_phone} (should be Abubakar, not Hrishi)")
+                        emergency_call = client.calls.create(
+                            url=f"{NGROK_URL}/emergency",
+                            to=guardian_phone,
+                            from_=os.getenv("TWILIO_PHONE_NUMBER")
+                        )
+                        print(f"✅ Emergency call to guardian ({guardian_phone}) initiated: {emergency_call.sid}")
+                    finally:
+                        db.close()
                 except Exception as e:
                     print(f"Error calling emergency number: {e}")
         
@@ -726,11 +776,20 @@ def escalate_calls():
         print("ERROR: Twilio client not initialized")
         return
     
-    my_number = os.getenv("MY_PHONE_NUMBER")
-    abus_number = os.getenv("ABUS_NUMBER")
+    # Get phone numbers from database
+    db = SessionLocal()
+    try:
+        my_number = get_primary_user_phone(db)
+        abus_number = get_guardian_phone(db)
+    finally:
+        db.close()
     
-    if not my_number or not abus_number:
-        print("ERROR: MY_PHONE_NUMBER or ABUS_NUMBER not set in .env")
+    if not my_number:
+        print("ERROR: Primary user phone number not found in database or .env")
+        return
+    
+    if not abus_number:
+        print("ERROR: Guardian phone number not found in database or .env")
         return
     
     # Reset the confirmation flag
@@ -782,13 +841,14 @@ def escalate_calls():
         else:
             print("Second call not answered. Escalating to emergency contact...")
         
-        # Escalate to emergency contact
+        # Escalate to emergency contact (guardian)
+        print(f"🚨 ESCALATING: Calling guardian at {abus_number} (should be Abubakar, not Hrishi)")
         emergency_call = client.calls.create(
             url=f"{NGROK_URL}/emergency",
             to=abus_number,
             from_=os.getenv("TWILIO_PHONE_NUMBER")
         )
-        print(f"Emergency call to {abus_number} initiated: {emergency_call.sid}")
+        print(f"✅ Emergency call to guardian ({abus_number}) initiated: {emergency_call.sid}")
         
     except Exception as e:
         print(f"Error in escalation process: {e}")
@@ -835,7 +895,7 @@ def monitor_database_temperature():
                 db.close()
             
             # Wait 30 seconds before next check
-            time.sleep(30)
+            time.sleep(5)
             
         except Exception as e:
             print(f"Error in database monitor: {e}")

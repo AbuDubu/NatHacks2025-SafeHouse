@@ -49,8 +49,8 @@ class CallResponse(BaseModel):
 @router.post("/emergency", response_model=CallResponse)
 def make_emergency_call(request: EmergencyCallRequest):
     """
-    Make an emergency call to the resident or guardian.
-    If to_number is not provided, calls MY_PHONE_NUMBER from environment.
+    Make an emergency call to the guardian.
+    If to_number is not provided, calls ABUS_NUMBER (guardian) from environment.
     """
     if not client:
         raise HTTPException(
@@ -64,12 +64,12 @@ def make_emergency_call(request: EmergencyCallRequest):
             detail="NGROK_URL not set in .env. Required for Twilio webhooks."
         )
     
-    # Determine phone number to call
-    to_number = request.to_number or os.getenv("MY_PHONE_NUMBER")
+    # Determine phone number to call - use ABUS_NUMBER (guardian) for emergency calls
+    to_number = request.to_number or os.getenv("ABUS_NUMBER")
     if not to_number:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No phone number provided and MY_PHONE_NUMBER not set in .env"
+            detail="No phone number provided and ABUS_NUMBER not set in .env"
         )
     
     # Build emergency message
@@ -77,9 +77,10 @@ def make_emergency_call(request: EmergencyCallRequest):
     alert_info = f" ({request.alert_type})" if request.alert_type else ""
     
     try:
-        # Make the call using the emergency endpoint
+        # Make the call using the emergency webhook endpoint
+        # Note: The router prefix is /phone-calls and main app prefix is /api, so full path is /api/phone-calls/emergency-webhook
         call = client.calls.create(
-            url=f"{ngrok_url}/emergency",
+            url=f"{ngrok_url}/api/phone-calls/emergency-webhook",
             to=to_number,
             from_=twilio_phone
         )
@@ -125,7 +126,7 @@ def make_temperature_alert_call(request: EmergencyCallRequest):
     try:
         # Make the call using the temperature-alert endpoint
         call = client.calls.create(
-            url=f"{ngrok_url}/temperature-alert",
+            url=f"{ngrok_url}/api/phone-calls/temperature-alert",
             to=to_number,
             from_=twilio_phone
         )
@@ -169,7 +170,7 @@ def call_resident(request: EmergencyCallRequest):
     try:
         # Use temperature-alert endpoint for interactive calls
         call = client.calls.create(
-            url=f"{ngrok_url}/temperature-alert",
+            url=f"{ngrok_url}/api/phone-calls/temperature-alert",
             to=request.to_number,
             from_=twilio_phone
         )
@@ -205,31 +206,60 @@ def voice():
     )
 
 
-@router.get("/emergency")
-@router.post("/emergency")
-def emergency():
-    """Twilio webhook for emergency calls"""
-    return Response(
-        content='<Response><Say voice="alice">This is an emergency call from SafeHouse. The user has triggered an emergency alert. Please check on them immediately.</Say><Hangup/></Response>',
-        media_type="application/xml"
-    )
+@router.get("/emergency-webhook")
+@router.post("/emergency-webhook")
+async def emergency_webhook(request: Request):
+    """Twilio webhook for emergency calls - handles form-encoded data from Twilio"""
+    try:
+        print("📞 Emergency webhook called by Twilio")
+        twiml = '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">This is an emergency call from SafeHouse. The user has triggered an emergency alert. Please check on them immediately.</Say><Hangup/></Response>'
+        return Response(
+            content=twiml,
+            media_type="application/xml",
+            headers={"Content-Type": "application/xml; charset=utf-8"}
+        )
+    except Exception as e:
+        print(f"❌ Error in emergency webhook: {e}")
+        import traceback
+        traceback.print_exc()
+        # Return a valid TwiML response even on error
+        twiml = '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">Emergency alert received. Please check on the user immediately.</Say><Hangup/></Response>'
+        return Response(
+            content=twiml,
+            media_type="application/xml",
+            headers={"Content-Type": "application/xml; charset=utf-8"}
+        )
 
 
 @router.get("/temperature-alert")
 @router.post("/temperature-alert")
-def temperature_alert():
+async def temperature_alert(request: Request):
     """Twilio webhook for temperature alert calls"""
-    return Response(
-        content=f'''<Response>
+    try:
+        print("🌡️ Temperature alert webhook called by Twilio")
+        twiml = f'''<?xml version="1.0" encoding="UTF-8"?><Response>
   <Say voice="alice">Alert from SafeHouse. Your home temperature is dangerously high. This may indicate a heatwave or fire.</Say>
   <Gather input="dtmf" numDigits="1" action="{ngrok_url}/api/phone-calls/temperature-response" method="POST" timeout="10">
     <Say voice="alice">Press 1 if everything is okay, or press 2 if you need emergency assistance.</Say>
   </Gather>
   <Say voice="alice">No response received. Escalating to emergency contact.</Say>
   <Hangup/>
-</Response>''',
-        media_type="application/xml"
-    )
+</Response>'''
+        return Response(
+            content=twiml,
+            media_type="application/xml",
+            headers={"Content-Type": "application/xml; charset=utf-8"}
+        )
+    except Exception as e:
+        print(f"❌ Error in temperature-alert webhook: {e}")
+        import traceback
+        traceback.print_exc()
+        twiml = '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">Temperature alert received. Please check your home.</Say><Hangup/></Response>'
+        return Response(
+            content=twiml,
+            media_type="application/xml",
+            headers={"Content-Type": "application/xml; charset=utf-8"}
+        )
 
 
 @router.get("/temperature-response")
@@ -258,7 +288,7 @@ async def temperature_response(request: Request):
             if client and abus_number:
                 try:
                     emergency_call = client.calls.create(
-                        url=f"{ngrok_url}/api/phone-calls/emergency",
+                        url=f"{ngrok_url}/api/phone-calls/emergency-webhook",
                         to=abus_number,
                         from_=twilio_phone
                     )
@@ -304,7 +334,7 @@ async def gather(request: Request):
             if client and abus_number:
                 try:
                     emergency_call = client.calls.create(
-                        url=f"{ngrok_url}/api/phone-calls/emergency",
+                        url=f"{ngrok_url}/api/phone-calls/emergency-webhook",
                         to=abus_number,
                         from_=twilio_phone
                     )
