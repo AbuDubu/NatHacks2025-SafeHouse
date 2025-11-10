@@ -4,7 +4,7 @@ import { LineChart } from 'react-native-chart-kit';
 import { Dimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { apiClient, SensorReading, Sensor } from '../lib/api';
-import { getHeartRateData, getBloodGlucoseData, getStepCountData, getSleepData, initializeHealthKit } from '../lib/appleHealth';
+import { getHeartRateData, getBloodGlucoseData, getStepCountData, getSleepData, initializeHealthKit, HealthDataPoint } from '../lib/appleHealth';
 
 const screenWidth = Dimensions.get('window').width;
 
@@ -165,8 +165,9 @@ export function GuardianTrends() {
   };
 
   // Process Apple Health data by day for chart display
+  // Now works with HealthDataPoint[] format from appleHealth.ts
   const processHealthDataByDay = (
-    healthData: Array<{ date: Date; heartRate?: number; steps?: number; sleepHours?: number; bloodGlucose?: number }>,
+    healthData: HealthDataPoint[],
     days: number,
     type: 'heartRate' | 'steps' | 'sleepHours' | 'bloodGlucose'
   ): number[] => {
@@ -183,25 +184,11 @@ export function GuardianTrends() {
     }
 
     // Group data by day
-    healthData.forEach(data => {
-      const dataDate = new Date(data.date);
+    healthData.forEach(dataPoint => {
+      const dataDate = new Date(dataPoint.timestamp);
       const daysDiff = Math.floor((now.getTime() - dataDate.getTime()) / (1000 * 60 * 60 * 24));
       if (daysDiff >= 0 && daysDiff < days) {
-        let value: number | undefined;
-        switch (type) {
-          case 'heartRate':
-            value = data.heartRate;
-            break;
-          case 'steps':
-            value = data.steps;
-            break;
-          case 'sleepHours':
-            value = data.sleepHours;
-            break;
-          case 'bloodGlucose':
-            value = data.bloodGlucose;
-            break;
-        }
+        const value = dataPoint.value;
         if (value !== undefined && value > 0) {
           dayData[daysDiff].push(value);
         }
@@ -211,12 +198,15 @@ export function GuardianTrends() {
     // Calculate average or sum for each day
     const result: number[] = [];
     for (let i = days - 1; i >= 0; i--) {
-      if (dayData[i].length > 0) {
+      if (dayData[i] && dayData[i].length > 0) {
         if (type === 'steps') {
           // Sum steps for the day
           result.push(Math.round(dayData[i].reduce((sum, val) => sum + val, 0)));
+        } else if (type === 'sleepHours') {
+          // Sum sleep hours for the day (already grouped by day in getSleepData)
+          result.push(Math.round(dayData[i].reduce((sum, val) => sum + val, 0) * 10) / 10);
         } else {
-          // Average for other metrics
+          // Average for heart rate and blood glucose
           const avg = dayData[i].reduce((sum, val) => sum + val, 0) / dayData[i].length;
           result.push(Math.round(avg * 10) / 10); // Round to 1 decimal
         }
