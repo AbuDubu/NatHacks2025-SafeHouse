@@ -27,7 +27,13 @@
       <dict>
         <key>CFBundleURLSchemes</key>
         <array>
-          <string>com.safehaven.app</string>
+          <string>com.nathacks2025.safehouse</string>
+        </array>
+      </dict>
+      <dict>
+        <key>CFBundleURLSchemes</key>
+        <array>
+          <string>exp+safehaven</string>
         </array>
       </dict>
     </array>

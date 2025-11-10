@@ -230,21 +230,12 @@ def _check_and_create_alerts(sensor: Sensor, value: float, db: Session):
             sensor_type=sensor.sensor_type
         )
     
-    elif sensor.sensor_type == "fall_detection" and value > 0:
-        alert = Alert(
-            user_id=user.id,
-            title="Fall Detected!",
-            message=f"Fall detected in {sensor.location or 'unknown location'}",
-            alert_level=AlertLevel.CRITICAL,
-            sensor_type=sensor.sensor_type
-        )
-    
     elif sensor.sensor_type == "co2" and value > 1000:
         alert = Alert(
             user_id=user.id,
-            title="High CO2 Level",
-            message=f"CO2 level in {sensor.location or 'unknown location'} is {value} ppm",
-            alert_level=AlertLevel.WARNING,
+            title="Carbon Monoxide Detected",
+            message=f"High carbon monoxide levels detected ({value} ppm) in {sensor.location or 'unknown location'}. Please evacuate immediately.",
+            alert_level=AlertLevel.CRITICAL,
             sensor_type=sensor.sensor_type
         )
     
