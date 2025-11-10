@@ -62,155 +62,12 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
     return () => clearInterval(interval);
   }, []);
 
-  const syncHealthDataToBackend = async (metrics: {
-    heartRate: number;
-    steps: number;
-    sleepHours: number;
-    sleepWeeklyAverage: number;
-    bloodGlucose: number;
-  }) => {
-    console.log('🔄 Starting health data sync to backend...', metrics);
-    try {
-      // Get the actual user from database to ensure correct name and user_id
-      let actualUserName = name;
-      let userId: number | undefined;
-      try {
-        const user = await apiClient.getPrimaryUser();
-        actualUserName = user.name;
-        userId = user.id;
-        console.log(`👤 Using user: ${actualUserName} (ID: ${userId}) for health data sync`);
-      } catch (err) {
-        console.log('⚠️ Could not get user for device ID:', err);
-      }
-      
-      // Use a device ID based on the actual user's name from database
-      const deviceId = `health-${actualUserName.toLowerCase().replace(/\s+/g, '-')}`;
-      
-      // Get existing sensors for this device
-      const existingSensors = await apiClient.getSensors();
-      const deviceSensors = existingSensors.filter(s => s.device_id === deviceId);
-      // Convert to lowercase for case-insensitive comparison (backend returns uppercase enum values)
-      const existingSensorTypes = new Set(deviceSensors.map(s => (s.sensor_type || '').toLowerCase()));
-      
-      console.log(`🔍 Checking sensors for device: ${deviceId}`);
-      console.log(`📋 Existing sensors:`, deviceSensors.map(s => ({ type: s.sensor_type, name: s.name })));
-      console.log(`📋 Existing sensor types (lowercase):`, Array.from(existingSensorTypes));
-      
-      // Create sensors that don't exist yet - create ALL health sensors upfront
-      // This ensures sensors exist even if data is 0, so Guardian can see them
-      const sensorTypes = [
-        { type: 'heart_rate', name: 'Heart Rate Monitor', unit: 'bpm' },
-        { type: 'glucose', name: 'Blood Glucose Monitor', unit: 'mg/dL' },
-        { type: 'sleep', name: 'Sleep Tracker', unit: 'hours' },
-        { type: 'sleep_weekly_avg', name: 'Sleep Weekly Average', unit: 'hours' },
-        { type: 'step_count', name: 'Step Counter', unit: 'steps' },
-      ];
-      
-      // userId is already set above when getting user for device ID
-      // If not set, try again
-      if (!userId) {
-        try {
-          const user = await apiClient.getPrimaryUser();
-          userId = user.id;
-        } catch (err) {
-          console.log('⚠️ Could not get user ID for sensor creation:', err);
-        }
-      }
-      
-      // Create all health sensors if they don't exist (even if data is 0)
-      for (const { type, name: sensorName } of sensorTypes) {
-        // Check case-insensitively (backend stores as uppercase enum, frontend uses lowercase)
-        if (!existingSensorTypes.has(type.toLowerCase())) {
-          try {
-            // Create sensor with user_id to link it to the user
-            await apiClient.createSensor(deviceId, sensorName, type, 'Apple Health', userId);
-            console.log(`✅ Created ${type} sensor for ${actualUserName}`);
-          } catch (err: any) {
-            // Check if error is because sensor already exists (different device_id)
-            if (err?.message?.includes('already exists') || err?.message?.includes('device_id')) {
-              console.log(`ℹ️ ${type} sensor already exists (possibly with different device_id)`);
-            } else {
-              console.log(`⚠️ Could not create ${type} sensor:`, err?.message || err);
-            }
-          }
-        } else {
-          console.log(`ℹ️ ${type} sensor already exists`);
-        }
-      }
-      
-      // Prepare readings to sync - sync ALL health metrics (even if 0)
-      // This ensures Guardian Dashboard can see all sensor types
-      const readings: Array<{ sensor_type: string; value: number; unit?: string }> = [];
-      
-      // Always sync heart rate (even if 0, so Guardian knows the sensor exists)
-      readings.push({
-        sensor_type: 'heart_rate',
-        value: metrics.heartRate,
-        unit: 'bpm',
-      });
-      
-      // Always sync glucose (even if 0)
-      readings.push({
-        sensor_type: 'glucose',
-        value: metrics.bloodGlucose,
-        unit: 'mg/dL',
-      });
-      
-      // Always sync sleep hours (even if 0)
-      readings.push({
-        sensor_type: 'sleep',
-        value: metrics.sleepHours,
-        unit: 'hours',
-      });
-      
-      // Always sync weekly average sleep (even if 0)
-      readings.push({
-        sensor_type: 'sleep_weekly_avg',
-        value: metrics.sleepWeeklyAverage,
-        unit: 'hours',
-      });
-      
-      // Always sync steps (even if 0)
-      readings.push({
-        sensor_type: 'step_count',
-        value: metrics.steps,
-        unit: 'steps',
-      });
-      
-      // Sync readings if we have any
-      // Reuse userId from above (already fetched for sensor creation)
-      // If userId wasn't set, try to get it again
-      if (!userId) {
-        try {
-          const user = await apiClient.getPrimaryUser();
-          userId = user.id;
-          console.log(`👤 Got user ID for health data sync: ${userId}`);
-        } catch (err) {
-          console.log('⚠️ Could not get user ID for health data sync:', err);
-        }
-      } else {
-        console.log(`👤 Syncing health data for user ID: ${userId}`);
-      }
-      
-      if (readings.length > 0) {
-        console.log(`📤 Syncing ${readings.length} health readings to backend:`, readings);
-        await apiClient.syncHealthReadings(deviceId, readings, userId);
-        console.log('✅ Synced Apple Health data to backend');
-      } else {
-        console.log('⚠️ No health readings to sync');
-      }
-    } catch (err) {
-      // Silently fail - don't block the UI if sync fails
-      console.log('Note: Could not sync health data to backend:', err);
-    }
-  };
-
   const loadDashboardData = async () => {
     try {
       setLoading(true);
       setError(null);
       
-      // Load Apple Health data
+      // Load Apple Health data (local only - not synced to database)
       const metrics = await getLatestHealthMetrics();
       console.log('📊 Health metrics fetched:', {
         heartRate: metrics.heartRate,
@@ -220,10 +77,6 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
         bloodGlucose: metrics.bloodGlucose,
       });
       setHealthMetrics(metrics);
-      
-      // Always sync Apple Health data to backend so Guardian can see it
-      // This ensures sensors are created and Guardian Dashboard can display all vitals
-      await syncHealthDataToBackend(metrics);
       
       const data = await apiClient.getDashboard();
       setDashboardData(data);

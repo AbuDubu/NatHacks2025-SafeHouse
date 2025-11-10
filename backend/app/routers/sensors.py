@@ -142,20 +142,6 @@ def create_bulk_readings(bulk_data: SensorReadingBulkCreate, db: Session = Depen
             detail=f"No sensors found for device_id: {bulk_data.device_id}"
         )
     
-    # If user_id is provided, associate sensors with user (for health data)
-    if bulk_data.user_id:
-        # Verify user exists
-        user = db.query(User).filter(User.id == bulk_data.user_id).first()
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"User with id {bulk_data.user_id} not found"
-            )
-        # Update sensors to be associated with this user
-        for sensor in sensors:
-            if sensor.user_id is None:
-                sensor.user_id = bulk_data.user_id
-    
     # Create a map of sensor_type to sensor
     sensor_map = {s.sensor_type: s for s in sensors}
     

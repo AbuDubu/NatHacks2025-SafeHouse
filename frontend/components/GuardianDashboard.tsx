@@ -92,12 +92,11 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
               status = 'warning';
             }
             
-            // Extract vitals from readings using EXACT same method as Resident Dashboard
-            // These come from resident's Apple Health data synced to backend
+            // Extract vitals from readings (hardware sensors only - Apple Health data is local only)
             const readings = dashboardData.recent_readings || [];
             
-            // Use the shared extraction function (EXACT same method as Resident Dashboard)
-            // Guardian doesn't have healthMetrics, so pass null - it will use readings only
+            // Extract vitals from hardware sensor readings only
+            // Note: Apple Health data is not synced to database, so Guardian won't see Apple Health metrics
             const { heartRate, bloodGlucose, sleepHours, steps } = extractVitalsFromReadings(readings, null);
             
             // Use weekly average as the sleep value (same as Resident Dashboard)
