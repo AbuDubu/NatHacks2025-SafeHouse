@@ -36,10 +36,34 @@ def get_dashboard(user_id: int = None, db: Session = Depends(get_db)):
     ).order_by(Alert.created_at.desc()).limit(10).all()
     
     # Get recent readings (last 24 hours)
+    # Filter by user's sensors (sensors with user_id matching this user)
     since = datetime.utcnow() - timedelta(hours=24)
     recent_readings = db.query(SensorReading).filter(
-        SensorReading.timestamp >= since
+        SensorReading.timestamp >= since,
+        SensorReading.sensor_id.in_(db.query(Sensor.id).filter(Sensor.user_id == user.id))
     ).order_by(SensorReading.timestamp.desc()).limit(50).all()
+    
+    # If no user-specific readings, try to find health sensors by device_id pattern
+    # Health sensors use device_id like "health-{username}"
+    if not recent_readings:
+        username_lower = user.name.lower().replace(' ', '-')
+        health_device_pattern = f"health-{username_lower}"
+        health_sensors = db.query(Sensor).filter(
+            Sensor.device_id.like(f"{health_device_pattern}%")
+        ).all()
+        if health_sensors:
+            health_sensor_ids = [s.id for s in health_sensors]
+            recent_readings = db.query(SensorReading).filter(
+                SensorReading.timestamp >= since,
+                SensorReading.sensor_id.in_(health_sensor_ids)
+            ).order_by(SensorReading.timestamp.desc()).limit(50).all()
+            print(f"📊 Found {len(recent_readings)} readings from {len(health_sensors)} health sensors for user {user.name}")
+    
+    # If still no readings, fall back to all recent readings (for backward compatibility)
+    if not recent_readings:
+        recent_readings = db.query(SensorReading).filter(
+            SensorReading.timestamp >= since
+        ).order_by(SensorReading.timestamp.desc()).limit(50).all()
     
     # Attach sensor info to readings
     readings_with_sensor = []

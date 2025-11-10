@@ -41,16 +41,20 @@ def create_user(name, email, phone, is_primary=True, guardian_id=None):
         return None  # Already exists, skip
     return None
 
-def create_sensor(device_id, name, sensor_type, location):
+def create_sensor(device_id, name, sensor_type, location, user_id=None):
     """Create a sensor"""
+    sensor_data = {
+        "device_id": device_id,
+        "name": name,
+        "sensor_type": sensor_type,
+        "location": location
+    }
+    if user_id is not None:
+        sensor_data["user_id"] = user_id
+    
     response = requests.post(
         f"{API_BASE}/sensors",
-        json={
-            "device_id": device_id,
-            "name": name,
-            "sensor_type": sensor_type,
-            "location": location
-        }
+        json=sensor_data
     )
     if response.status_code in [200, 201]:
         return response.json()
@@ -163,26 +167,49 @@ def main():
     
     print(f"  📊 Created/updated {created_users} new users\n")
     
+    # Get resident user IDs for health sensors
+    users_response = requests.get(f"{API_BASE}/users")
+    resident_user_ids = {}
+    if users_response.status_code == 200:
+        users = users_response.json()
+        for user in users:
+            if user.get("is_primary"):
+                # Use email as key to find user
+                for name, email, _, _, _ in residents:
+                    if user["email"] == email:
+                        resident_user_ids[email] = user["id"]
+                        break
+    
     # Create many sensors across different locations
     print("📡 Creating sensors...")
     locations = ["Living Room", "Bedroom"]
     sensor_types = [
-        ("temperature", "°C", 18, 25),
-        ("humidity", "%", 30, 70),
-        ("motion", "", 0, 1),
-        ("smoke", "", 0, 0.5),
-        ("co2", "ppm", 400, 1000),
+        ("temperature", "°C", 18, 25, None),  # (type, unit, min, max, user_id)
+        ("humidity", "%", 30, 70, None),
+        ("motion", "", 0, 1, None),
+        ("smoke", "", 0, 0.5, None),
+        ("co2", "ppm", 400, 1000, None),
+        ("heart_rate", "bpm", 60, 100, None),
+        ("fall_detection", "", 0, 0, None),
+        ("door", "", 0, 1, None),
+        ("water_leak", "", 0, 0, None),
+    ]
+    
+    # Health sensors (linked to users)
+    health_sensor_types = [
         ("heart_rate", "bpm", 60, 100),
-        ("fall_detection", "", 0, 0),
-        ("door", "", 0, 1),
-        ("water_leak", "", 0, 0),
+        ("glucose", "mg/dL", 70, 140),
+        ("sleep", "hours", 6, 9),
+        ("sleep_weekly_avg", "hours", 6, 8),
+        ("step_count", "steps", 3000, 10000),
     ]
     
     sensors_created = 0
     sensor_list = []
     
+    # Create environment sensors
     for location in locations:
-        for sensor_type, unit, min_val, max_val in sensor_types:
+        for sensor_type, unit, min_val, max_val, _ in sensor_types:
             device_id = f"{sensor_type}-{location.lower().replace(' ', '-')}-{random.randint(100, 999)}"
             name = f"{location} {sensor_type.title()}"
             
@@ -190,6 +217,19 @@ def main():
                 sensors_created += 1
                 sensor_list.append((device_id, sensor_type, unit, min_val, max_val))
                 print(f"  ✅ Created: {name} in {location}")
+    
+    # Create health sensors for each resident
+    for name, email, _, _, _ in residents:
+        user_id = resident_user_ids.get(email)
+        if user_id:
+            for sensor_type, unit, min_val, max_val in health_sensor_types:
+                device_id = f"health-{name.lower().replace(' ', '-')}-{sensor_type}"
+                sensor_name = f"{name} {sensor_type.replace('_', ' ').title()}"
+                
+                if create_sensor(device_id, sensor_name, sensor_type, "Health", user_id):
+                    sensors_created += 1
+                    sensor_list.append((device_id, sensor_type, unit, min_val, max_val))
+                    print(f"  ✅ Created health sensor: {sensor_name} for {name}")
     
     print(f"  📊 Created {sensors_created} new sensors\n")
     
@@ -220,11 +260,45 @@ def main():
                 elif sensor_type == "co2":
                     value = random.uniform(min_val, max_val)
                 elif sensor_type == "heart_rate":
-                    value = random.uniform(min_val, max_val)
+                    # Heart rate varies by time of day (lower at night)
+                    if 22 <= hour or hour <= 6:
+                        value = random.uniform(55, 70)  # Lower at night
+                    else:
+                        value = random.uniform(min_val, max_val)
+                elif sensor_type == "glucose":
+                    # Glucose varies by time of day (higher after meals)
+                    if 7 <= hour <= 9 or 12 <= hour <= 14 or 18 <= hour <= 20:
+                        value = random.uniform(100, max_val)  # Higher after meals
+                    else:
+                        value = random.uniform(min_val, 100)
+                elif sensor_type == "sleep":
+                    # Sleep hours (only during night hours, 0 during day)
+                    if 22 <= hour or hour <= 8:
+                        value = random.uniform(min_val, max_val) if random.random() > 0.3 else 0
+                    else:
+                        value = 0
+                elif sensor_type == "sleep_weekly_avg":
+                    # Weekly average (only create once per day, around midnight)
+                    if hour == 0:
+                        value = random.uniform(min_val, max_val)
+                    else:
+                        continue  # Skip this reading for other hours
+                elif sensor_type == "step_count":
+                    # Steps accumulate during the day
+                    if 6 <= hour <= 22:
+                        # More steps during active hours
+                        hourly_steps = random.uniform(200, 800)
+                        value = hourly_steps
+                    else:
+                        value = random.uniform(0, 100)  # Few steps at night
                 elif sensor_type in ["fall_detection", "water_leak"]:
                     value = 1 if random.random() > 0.99 else 0  # Rare events
                 else:
                     value = random.uniform(min_val, max_val)
+                
+                # Skip sleep_weekly_avg except at midnight
+                if sensor_type == "sleep_weekly_avg" and hour != 0:
+                    continue
                 
                 create_reading(device_id, sensor_type, round(value, 2), unit, hours_ago)
                 total_readings += 1

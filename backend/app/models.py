@@ -7,6 +7,7 @@ from sqlalchemy import (
     Boolean,
     ForeignKey,
     Enum as SQLEnum,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -26,6 +27,10 @@ class SensorType(str, enum.Enum):
     FALL_DETECTION = "fall_detection"
     DOOR = "door"
     WATER_LEAK = "water_leak"
+    SLEEP = "sleep"
+    SLEEP_WEEKLY_AVG = "sleep_weekly_avg"
+    STEP_COUNT = "step_count"
+    GLUCOSE = "glucose"
 
 
 class AlertLevel(str, enum.Enum):
@@ -62,18 +67,25 @@ class Sensor(Base):
     __tablename__ = "sensors"
 
     id = Column(Integer, primary_key=True, index=True)
-    device_id = Column(String, unique=True, index=True, nullable=False)
+    device_id = Column(String, index=True, nullable=False)
     name = Column(String, nullable=False)
     sensor_type = Column(SQLEnum(SensorType), nullable=False)
+    
+    # Composite unique constraint: allow multiple sensors per device_id, but only one per (device_id, sensor_type)
+    __table_args__ = (
+        UniqueConstraint('device_id', 'sensor_type', name='uq_sensors_device_id_sensor_type'),
+    )
     location = Column(String)  # e.g., "Living Room", "Bedroom", "Kitchen"
     is_active = Column(Boolean, default=True)
     last_seen = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)  # Link sensor to user (for health data)
 
     # Relationships
     readings = relationship(
         "SensorReading", back_populates="sensor", cascade="all, delete-orphan"
     )
+    user = relationship("User", backref="sensors")
 
 
 class SensorReading(Base):
