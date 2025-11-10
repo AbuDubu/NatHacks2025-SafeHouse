@@ -298,7 +298,28 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
                   >
                     <Text style={styles.emergencyButtonText}>View Details</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={styles.callButton}>
+                  <TouchableOpacity 
+                    style={styles.callButton}
+                    onPress={async () => {
+                      const resident = residents.find(r => r.dashboardData?.user.id === criticalAlert.user_id);
+                      if (resident) {
+                        try {
+                          const result = await apiClient.callResident({
+                            to_number: resident.dashboardData?.user.phone || '',
+                            resident_name: resident.name,
+                          });
+                          console.log('Call to resident initiated:', result);
+                        } catch (error) {
+                          console.error('Failed to call resident:', error);
+                          // Fallback to emergency call if resident phone not available
+                          onEmergency({ 
+                            residentName: resident.name, 
+                            alertType: criticalAlert.alert_level 
+                          });
+                        }
+                      }
+                    }}
+                  >
                     <Ionicons name="call" size={16} color="#dc2626" />
                     <Text style={styles.callButtonText}>Call Now</Text>
                   </TouchableOpacity>
@@ -648,13 +669,32 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
             <View style={styles.actionSheetButtons}>
               <TouchableOpacity
                 style={[styles.actionSheetButton, styles.actionSheetButtonCall]}
-                onPress={() => {
+                onPress={async () => {
                   setShowActionSheet(false);
                   if (selectedInsight) {
-                    onEmergency({
-                      residentName: selectedInsight.residentName,
-                      alertType: selectedInsight.insight.severity,
-                    });
+                    const resident = residents.find(r => r.id === selectedInsight.residentId);
+                    if (resident && resident.dashboardData?.user.phone) {
+                      try {
+                        const result = await apiClient.callResident({
+                          to_number: resident.dashboardData.user.phone,
+                          resident_name: selectedInsight.residentName,
+                        });
+                        console.log('Call to resident initiated:', result);
+                      } catch (error) {
+                        console.error('Failed to call resident:', error);
+                        // Fallback to emergency call
+                        onEmergency({
+                          residentName: selectedInsight.residentName,
+                          alertType: selectedInsight.insight.severity,
+                        });
+                      }
+                    } else {
+                      // No phone number, use emergency call
+                      onEmergency({
+                        residentName: selectedInsight.residentName,
+                        alertType: selectedInsight.insight.severity,
+                      });
+                    }
                   }
                 }}
               >

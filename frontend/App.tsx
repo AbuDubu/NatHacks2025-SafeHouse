@@ -52,8 +52,21 @@ function AppContent() {
     }
   };
 
-  const handleEmergency = (context?: { residentName?: string; alertType?: string }) => {
+  const handleEmergency = async (context?: { residentName?: string; alertType?: string }) => {
     setEmergencyContext(context || {});
+    
+    // Make the actual phone call
+    try {
+      const result = await apiClient.makeEmergencyCall({
+        resident_name: context?.residentName,
+        alert_type: context?.alertType,
+      });
+      console.log('Emergency call initiated:', result);
+    } catch (error) {
+      console.error('Failed to initiate emergency call:', error);
+      // Still show emergency screen even if call fails
+    }
+    
     setCurrentScreen('emergency');
   };
 
