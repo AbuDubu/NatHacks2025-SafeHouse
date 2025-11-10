@@ -5,7 +5,6 @@ import { Dimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { apiClient, SensorReading, Sensor } from '../lib/api';
 import { getHeartRateData, getBloodGlucoseData, getStepCountData, getSleepData, initializeHealthKit } from '../lib/appleHealth';
-import { useTheme } from '../contexts/ThemeContext';
 
 const screenWidth = Dimensions.get('window').width;
 
@@ -19,7 +18,6 @@ interface ChartData {
 }
 
 export function GuardianTrends() {
-  const { colors, isDark } = useTheme();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [heartRateData, setHeartRateData] = useState<ChartData | null>(null);
@@ -268,41 +266,37 @@ export function GuardianTrends() {
   };
 
   const chartConfig = {
-    backgroundColor: isDark ? colors.card : '#ffffff',
-    backgroundGradientFrom: isDark ? colors.card : '#ffffff',
-    backgroundGradientTo: isDark ? colors.card : '#ffffff',
+    backgroundColor: '#ffffff',
+    backgroundGradientFrom: '#ffffff',
+    backgroundGradientTo: '#ffffff',
     decimalPlaces: 1,
-    color: (opacity = 1) => isDark 
-      ? `rgba(148, 163, 184, ${opacity})` 
-      : `rgba(107, 114, 128, ${opacity})`,
-    labelColor: (opacity = 1) => isDark 
-      ? `rgba(241, 245, 249, ${opacity})` 
-      : `rgba(107, 114, 128, ${opacity})`,
+    color: (opacity = 1) => `rgba(107, 114, 128, ${opacity})`,
+    labelColor: (opacity = 1) => `rgba(107, 114, 128, ${opacity})`,
     style: {
       borderRadius: 16,
     },
     propsForDots: {
       r: '4',
       strokeWidth: '2',
-      stroke: isDark ? colors.card : '#ffffff',
+      stroke: '#ffffff',
     },
   };
 
   if (loading) {
     return (
-      <View style={[styles.container, styles.centerContent, { backgroundColor: colors.background }]}>
-        <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>Loading trends...</Text>
+      <View style={[styles.container, styles.centerContent]}>
+        <ActivityIndicator size="large" color="#2563eb" />
+        <Text style={styles.loadingText}>Loading trends...</Text>
       </View>
     );
   }
 
   if (error) {
     return (
-      <View style={[styles.container, styles.centerContent, { backgroundColor: colors.background }]}>
-        <Ionicons name="alert-circle" size={48} color={colors.destructive} />
-        <Text style={[styles.errorText, { color: colors.destructive }]}>{error}</Text>
-        <TouchableOpacity onPress={loadTrendData} style={[styles.retryButton, { backgroundColor: colors.primary }]}>
+      <View style={[styles.container, styles.centerContent]}>
+        <Ionicons name="alert-circle" size={48} color="#dc2626" />
+        <Text style={styles.errorText}>{error}</Text>
+        <TouchableOpacity onPress={loadTrendData} style={styles.retryButton}>
           <Text style={styles.retryButtonText}>Retry</Text>
         </TouchableOpacity>
       </View>
@@ -313,14 +307,14 @@ export function GuardianTrends() {
   const hasAnyData = heartRateData || glucoseData || sleepData || activityData;
 
   return (
-    <ScrollView contentContainerStyle={[styles.container, { backgroundColor: colors.background }]}>
-      <Text style={[styles.title, { color: colors.foreground }]}>Trend Analytics</Text>
+    <ScrollView contentContainerStyle={styles.container}>
+      <Text style={styles.title}>Trend Analytics</Text>
 
       {!hasAnyData && (
-        <View style={[styles.chartCard, styles.centerContent, { backgroundColor: colors.card }]}>
-          <Ionicons name="stats-chart-outline" size={64} color={colors.mutedForeground} />
-          <Text style={[styles.noDataText, { color: colors.foreground }]}>No trend data available</Text>
-          <Text style={[styles.noDataSubtext, { color: colors.mutedForeground }]}>
+        <View style={[styles.chartCard, styles.centerContent]}>
+          <Ionicons name="stats-chart-outline" size={64} color="#d1d5db" />
+          <Text style={styles.noDataText}>No trend data available</Text>
+          <Text style={styles.noDataSubtext}>
             Connect Apple Health or ensure sensors are sending data to view trends.
           </Text>
         </View>
@@ -328,19 +322,19 @@ export function GuardianTrends() {
 
       {/* Heart Rate Trend */}
       {heartRateData && (
-        <View style={[styles.chartCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <View style={styles.chartCard}>
           <View style={styles.chartHeader}>
             <View style={styles.chartTitleContainer}>
-              <View style={[styles.iconContainer, { backgroundColor: isDark ? '#2e1a1a' : '#fef2f2' }]}>
+              <View style={[styles.iconContainer, styles.redIcon]}>
                 <Ionicons name="heart" size={20} color="#dc2626" />
               </View>
               <View>
-                <Text style={[styles.chartTitle, { color: colors.foreground }]}>Heart Rate</Text>
-                <Text style={[styles.chartSubtitle, { color: colors.mutedForeground }]}>7-day trend</Text>
+                <Text style={styles.chartTitle}>Heart Rate</Text>
+                <Text style={styles.chartSubtitle}>7-day trend</Text>
               </View>
             </View>
-            <TouchableOpacity style={[styles.checkInButton, { borderColor: colors.primary }]}>
-              <Text style={[styles.checkInButtonText, { color: colors.primary }]}>Check In</Text>
+            <TouchableOpacity style={styles.checkInButton}>
+              <Text style={styles.checkInButtonText}>Check In</Text>
             </TouchableOpacity>
           </View>
           <LineChart
@@ -360,19 +354,19 @@ export function GuardianTrends() {
 
       {/* Blood Glucose Trend */}
       {glucoseData && (
-        <View style={[styles.chartCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <View style={styles.chartCard}>
           <View style={styles.chartHeader}>
             <View style={styles.chartTitleContainer}>
-              <View style={[styles.iconContainer, { backgroundColor: isDark ? '#1a1f2e' : '#eff6ff' }]}>
-                <Ionicons name="water-outline" size={20} color={colors.primary} />
+              <View style={[styles.iconContainer, styles.blueIcon]}>
+                <Ionicons name="water-outline" size={20} color="#2563eb" />
               </View>
               <View>
-                <Text style={[styles.chartTitle, { color: colors.foreground }]}>Blood Glucose</Text>
-                <Text style={[styles.chartSubtitle, { color: colors.mutedForeground }]}>7-day trend</Text>
+                <Text style={styles.chartTitle}>Blood Glucose</Text>
+                <Text style={styles.chartSubtitle}>7-day trend</Text>
               </View>
             </View>
-            <TouchableOpacity style={[styles.checkInButton, { borderColor: colors.primary }]}>
-              <Text style={[styles.checkInButtonText, { color: colors.primary }]}>Check In</Text>
+            <TouchableOpacity style={styles.checkInButton}>
+              <Text style={styles.checkInButtonText}>Check In</Text>
             </TouchableOpacity>
           </View>
           <LineChart
@@ -391,19 +385,19 @@ export function GuardianTrends() {
 
       {/* Sleep Quality Trend */}
       {sleepData && (
-        <View style={[styles.chartCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <View style={styles.chartCard}>
           <View style={styles.chartHeader}>
             <View style={styles.chartTitleContainer}>
-              <View style={[styles.iconContainer, { backgroundColor: isDark ? '#2e1a2e' : '#f3e8ff' }]}>
+              <View style={[styles.iconContainer, styles.purpleIcon]}>
                 <Ionicons name="moon" size={20} color="#8b5cf6" />
               </View>
               <View>
-                <Text style={[styles.chartTitle, { color: colors.foreground }]}>Sleep Quality</Text>
-                <Text style={[styles.chartSubtitle, { color: colors.mutedForeground }]}>7-day trend</Text>
+                <Text style={styles.chartTitle}>Sleep Quality</Text>
+                <Text style={styles.chartSubtitle}>7-day trend</Text>
               </View>
             </View>
-            <TouchableOpacity style={[styles.checkInButton, { borderColor: colors.primary }]}>
-              <Text style={[styles.checkInButtonText, { color: colors.primary }]}>Check In</Text>
+            <TouchableOpacity style={styles.checkInButton}>
+              <Text style={styles.checkInButtonText}>Check In</Text>
             </TouchableOpacity>
           </View>
           <LineChart
@@ -422,19 +416,19 @@ export function GuardianTrends() {
 
       {/* Activity Level Trend */}
       {activityData && (
-        <View style={[styles.chartCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <View style={styles.chartCard}>
           <View style={styles.chartHeader}>
             <View style={styles.chartTitleContainer}>
-              <View style={[styles.iconContainer, { backgroundColor: isDark ? '#1a2e1a' : '#f0fdf4' }]}>
+              <View style={[styles.iconContainer, styles.greenIcon]}>
                 <Ionicons name="walk-outline" size={20} color="#10b981" />
               </View>
               <View>
-                <Text style={[styles.chartTitle, { color: colors.foreground }]}>Activity Level</Text>
-                <Text style={[styles.chartSubtitle, { color: colors.mutedForeground }]}>7-day trend</Text>
+                <Text style={styles.chartTitle}>Activity Level</Text>
+                <Text style={styles.chartSubtitle}>7-day trend</Text>
               </View>
             </View>
-            <TouchableOpacity style={[styles.checkInButton, { borderColor: colors.primary }]}>
-              <Text style={[styles.checkInButtonText, { color: colors.primary }]}>Check In</Text>
+            <TouchableOpacity style={styles.checkInButton}>
+              <Text style={styles.checkInButtonText}>Check In</Text>
             </TouchableOpacity>
           </View>
           <LineChart
@@ -458,6 +452,7 @@ const styles = StyleSheet.create({
   container: {
     padding: 24,
     paddingBottom: 100,
+    backgroundColor: '#f9fafb',
   },
   centerContent: {
     justifyContent: 'center',
@@ -467,10 +462,12 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 16,
+    color: '#6b7280',
     marginTop: 16,
   },
   errorText: {
     fontSize: 16,
+    color: '#dc2626',
     textAlign: 'center',
     marginTop: 16,
   },
@@ -478,6 +475,7 @@ const styles = StyleSheet.create({
     marginTop: 16,
     paddingHorizontal: 24,
     paddingVertical: 12,
+    backgroundColor: '#2563eb',
     borderRadius: 8,
   },
   retryButtonText: {
@@ -487,12 +485,15 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: 'bold',
+    color: '#111827',
     marginBottom: 24,
   },
   chartCard: {
     padding: 24,
+    backgroundColor: '#ffffff',
     borderRadius: 24,
     borderWidth: 1,
+    borderColor: '#e5e7eb',
     marginBottom: 24,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -515,20 +516,36 @@ const styles = StyleSheet.create({
     padding: 8,
     borderRadius: 8,
   },
+  redIcon: {
+    backgroundColor: '#fee2e2',
+  },
+  blueIcon: {
+    backgroundColor: '#dbeafe',
+  },
+  purpleIcon: {
+    backgroundColor: '#f3e8ff',
+  },
+  greenIcon: {
+    backgroundColor: '#d1fae5',
+  },
   chartTitle: {
     fontSize: 18,
     fontWeight: '600',
+    color: '#111827',
   },
   chartSubtitle: {
     fontSize: 14,
+    color: '#6b7280',
   },
   checkInButton: {
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderWidth: 1,
+    borderColor: '#93c5fd',
     borderRadius: 8,
   },
   checkInButtonText: {
+    color: '#2563eb',
     fontWeight: '500',
     fontSize: 14,
   },
@@ -539,10 +556,12 @@ const styles = StyleSheet.create({
   noDataText: {
     fontSize: 18,
     fontWeight: '600',
+    color: '#6b7280',
     marginTop: 16,
   },
   noDataSubtext: {
     fontSize: 14,
+    color: '#9ca3af',
     textAlign: 'center',
     marginTop: 8,
     paddingHorizontal: 24,

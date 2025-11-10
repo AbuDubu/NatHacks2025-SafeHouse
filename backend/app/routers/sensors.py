@@ -18,15 +18,13 @@ router = APIRouter(prefix="/sensors", tags=["sensors"])
 @router.post("/", response_model=SensorSchema, status_code=status.HTTP_201_CREATED)
 def create_sensor(sensor: SensorCreate, db: Session = Depends(get_db)):
     """Register a new sensor device"""
-    # Check if sensor with same device_id AND sensor_type already exists
-    # Allow multiple sensors per device_id (e.g., health-hrishi-shah can have heart_rate, glucose, etc.)
-    existing = db.query(Sensor).filter(
-        Sensor.device_id == sensor.device_id,
-        Sensor.sensor_type == sensor.sensor_type
-    ).first()
+    # Check if sensor with device_id already exists
+    existing = db.query(Sensor).filter(Sensor.device_id == sensor.device_id).first()
     if existing:
-        # Return existing sensor instead of error (idempotent)
-        return existing
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sensor with this device_id already exists"
+        )
     
     db_sensor = Sensor(**sensor.model_dump())
     db.add(db_sensor)

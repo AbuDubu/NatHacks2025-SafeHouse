@@ -895,7 +895,7 @@ def monitor_database_temperature():
                 db.close()
             
             # Wait 30 seconds before next check
-            time.sleep(30)
+            time.sleep(5)
             
         except Exception as e:
             print(f"Error in database monitor: {e}")

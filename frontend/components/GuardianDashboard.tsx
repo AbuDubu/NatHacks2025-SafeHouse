@@ -6,7 +6,6 @@ import { HouseTemperatureTab } from './HouseTemperatureTab';
 import { useTheme } from '../contexts/ThemeContext';
 import { apiClient, User, DashboardData, Alert, SensorReading, Sensor } from '../lib/api';
 import { generateHealthInsights, Insight } from '../lib/healthInsights';
-import { extractVitalsFromReadings } from '../lib/vitalsExtraction';
 
 interface GuardianDashboardProps {
   onEmergency: (context?: { residentName?: string; alertType?: string }) => void;
@@ -23,8 +22,7 @@ interface Resident {
     heartRate: number;
     glucose: number;
     sleep: number;
-    sleepWeeklyAverage: number;
-    activity: number; // steps
+    activity: number;
   };
   dashboardData?: DashboardData;
   insights?: Insight[];
@@ -99,21 +97,14 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
             // Note: Apple Health data is not synced to database, so Guardian won't see Apple Health metrics
             const { heartRate, bloodGlucose, sleepHours, steps } = extractVitalsFromReadings(readings, null);
             
-            // Use weekly average as the sleep value (same as Resident Dashboard)
-            const sleep = sleepHours;
-            const glucose = bloodGlucose;
-            const activity = steps > 0 ? Math.round(steps) : 0;
+            // Get sleep and activity from sensor readings if available
+            // Sleep could come from sleep sensor or calculated from activity patterns
+            const sleepReading = readings.find(r => r.sensor?.sensor_type === 'sleep');
+            const sleep = sleepReading ? sleepReading.value : 0;
             
-            console.log(`📊 Resident ${user.name} vitals (using EXACT same method as Resident Dashboard):`, {
-              heartRate,
-              glucose,
-              sleep,
-              sleepHours,
-              activity,
-              steps,
-              totalReadings: readings.length,
-              sensorTypes: readings.map(r => r.sensor?.sensor_type).filter(Boolean),
-            });
+            // Activity from step count sensor if available
+            const activityReading = readings.find(r => r.sensor?.sensor_type === 'activity' || r.sensor?.sensor_type === 'step_count');
+            const activity = activityReading ? Math.round(activityReading.value) : 0;
             
             // Set critical alert if found
             if (criticalAlerts.length > 0 && !criticalAlert) {
@@ -127,10 +118,9 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
               photo: user.name.substring(0, 2).toUpperCase(),
               status,
               vitals: {
-                heartRate: heartRate > 0 ? Math.round(heartRate) : 0,
-                glucose: glucose > 0 ? Math.round(glucose) : 0,
+                heartRate: Math.round(heartRate),
+                glucose: Math.round(glucose),
                 sleep: sleep > 0 ? sleep : 0,
-                sleepWeeklyAverage: sleep > 0 ? sleep : 0,
                 activity: activity > 0 ? activity : 0,
               },
               dashboardData,
@@ -148,7 +138,6 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
                 heartRate: 0,
                 glucose: 0,
                 sleep: 0,
-                sleepWeeklyAverage: 0,
                 activity: 0,
               },
             };
@@ -166,12 +155,7 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
   };
 
   const getLatestReading = (readings: SensorReading[], sensorType: string): number | null => {
-    // Handle both lowercase and uppercase sensor types
-    const filtered = readings.filter(r => {
-      const readingType = r.sensor?.sensor_type;
-      if (!readingType) return false;
-      return readingType.toLowerCase() === sensorType.toLowerCase();
-    });
+    const filtered = readings.filter(r => r.sensor?.sensor_type === sensorType);
     if (filtered.length === 0) return null;
     const sorted = filtered.sort((a, b) => 
       new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
@@ -381,22 +365,19 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
                       <View style={[styles.vitalItem, { backgroundColor: colors.muted }]}>
                         <Text style={[styles.vitalLabel, { color: colors.mutedForeground }]}>Glucose</Text>
                         <Text style={[styles.vitalValue, { color: colors.foreground }]}>
-                          {resident.vitals.glucose > 0 ? `${Math.round(resident.vitals.glucose)} mg/dL` : '--'}
+                          {resident.vitals.glucose > 0 ? `${resident.vitals.glucose} mg/dL` : '--'}
                         </Text>
                       </View>
                       <View style={[styles.vitalItem, { backgroundColor: colors.muted }]}>
                         <Text style={[styles.vitalLabel, { color: colors.mutedForeground }]}>Sleep</Text>
                         <Text style={[styles.vitalValue, { color: colors.foreground }]}>
-                          {resident.vitals.sleep > 0 ? `${resident.vitals.sleep.toFixed(1)}h` : '--'}
-                        </Text>
-                        <Text style={[styles.vitalSubtext, { color: colors.mutedForeground }]}>
-                          Weekly avg
+                          {resident.vitals.sleep > 0 ? `${resident.vitals.sleep}h` : '--'}
                         </Text>
                       </View>
                       <View style={[styles.vitalItem, { backgroundColor: colors.muted }]}>
-                        <Text style={[styles.vitalLabel, { color: colors.mutedForeground }]}>Steps</Text>
+                        <Text style={[styles.vitalLabel, { color: colors.mutedForeground }]}>Activity</Text>
                         <Text style={[styles.vitalValue, { color: colors.foreground }]}>
-                          {resident.vitals.activity > 0 ? resident.vitals.activity.toLocaleString() : '--'}
+                          {resident.vitals.activity > 0 ? `${resident.vitals.activity} steps` : '--'}
                         </Text>
                       </View>
                     </View>
@@ -951,11 +932,6 @@ export function GuardianDashboard({ onEmergency, onLogout }: GuardianDashboardPr
     fontSize: 16,
     fontWeight: '600',
     color: '#111827',
-  },
-  vitalSubtext: {
-    fontSize: 11,
-    color: '#6b7280',
-    marginTop: 2,
   },
   checkInButton: {
     padding: 12,

@@ -1,11 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Modal, Switch } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Modal } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { apiClient, DashboardData, SensorReading } from '../lib/api';
 import { generateHealthInsights, Insight } from '../lib/healthInsights';
 import { getLatestHealthMetrics, initializeHealthKit } from '../lib/appleHealth';
-import { extractVitalsFromReadings, matchesSensorType } from '../lib/vitalsExtraction';
-import { useTheme } from '../contexts/ThemeContext';
 
 interface ResidentDashboardProps {
   name: string;
@@ -23,7 +21,6 @@ interface VitalCard {
 }
 
 export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashboardProps) {
-  const { colors, isDark, toggleTheme } = useTheme();
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +41,6 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
     heartRate: number;
     steps: number;
     sleepHours: number;
-    sleepWeeklyAverage: number;
     bloodGlucose: number;
   } | null>(null);
   const [showActionSheet, setShowActionSheet] = useState(false);
@@ -69,13 +65,6 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
       
       // Load Apple Health data (local only - not synced to database)
       const metrics = await getLatestHealthMetrics();
-      console.log('📊 Health metrics fetched:', {
-        heartRate: metrics.heartRate,
-        steps: metrics.steps,
-        sleepHours: metrics.sleepHours,
-        sleepWeeklyAverage: metrics.sleepWeeklyAverage,
-        bloodGlucose: metrics.bloodGlucose,
-      });
       setHealthMetrics(metrics);
       
       const data = await apiClient.getDashboard();
@@ -140,12 +129,22 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
   };
 
   // Extract vitals from Apple Health and sensor readings
-  // Uses the shared extraction function to ensure consistency with Guardian Dashboard
   const extractVitals = (readings: SensorReading[]): VitalCard[] => {
     const vitals: VitalCard[] = [];
     
-    // Use the shared extraction function (EXACT same method as Guardian Dashboard)
-    const { heartRate, bloodGlucose, sleepHours, steps } = extractVitalsFromReadings(readings, healthMetrics);
+    // Use Apple Health data if available, otherwise fall back to sensor readings
+    const heartRate = healthMetrics?.heartRate || 
+      readings
+        .filter(r => r.sensor?.sensor_type === 'heart_rate')
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0]?.value || 0;
+    
+    const bloodGlucose = healthMetrics?.bloodGlucose || 
+      readings
+        .filter(r => r.sensor?.sensor_type === 'glucose' || r.sensor?.sensor_type === 'co2')
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0]?.value || 0;
+    
+    const sleepHours = healthMetrics?.sleepHours || 0;
+    const steps = healthMetrics?.steps || 0;
     
     // Heart Rate
     if (heartRate > 0) {
@@ -191,13 +190,13 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
       });
     }
 
-    // Sleep Quality (from Apple Health - weekly average)
+    // Sleep Quality (from Apple Health)
     if (sleepHours > 0) {
       vitals.push({
         icon: 'moon-outline',
         label: 'Sleep Quality',
         value: sleepHours.toFixed(1),
-        unit: 'hours weekly average',
+        unit: 'hours',
         status: sleepHours < 6 || sleepHours > 9 ? 'warning' : 'normal',
         color: sleepHours < 6 || sleepHours > 9 ? 'yellow' : 'green',
       });
@@ -206,7 +205,7 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
         icon: 'moon-outline',
         label: 'Sleep Quality',
         value: '--',
-        unit: 'hours weekly average',
+        unit: 'hours',
         status: 'normal',
         color: 'green',
       });
@@ -254,19 +253,19 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
 
   if (loading && !dashboardData) {
     return (
-      <View style={[styles.container, styles.centerContent, { backgroundColor: colors.background }]}>
-        <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>Loading dashboard...</Text>
+      <View style={[styles.container, styles.centerContent]}>
+        <ActivityIndicator size="large" color="#2563eb" />
+        <Text style={styles.loadingText}>Loading dashboard...</Text>
       </View>
     );
   }
 
   if (error && !dashboardData) {
     return (
-      <View style={[styles.container, styles.centerContent, { backgroundColor: colors.background }]}>
-        <Ionicons name="alert-circle" size={48} color={colors.destructive} />
-        <Text style={[styles.errorText, { color: colors.destructive }]}>{error}</Text>
-        <TouchableOpacity onPress={loadDashboardData} style={[styles.retryButton, { backgroundColor: colors.primary }]}>
+      <View style={[styles.container, styles.centerContent]}>
+        <Ionicons name="alert-circle" size={48} color="#dc2626" />
+        <Text style={styles.errorText}>{error}</Text>
+        <TouchableOpacity onPress={loadDashboardData} style={styles.retryButton}>
           <Text style={styles.retryButtonText}>Retry</Text>
         </TouchableOpacity>
       </View>
@@ -274,28 +273,28 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
+    <View style={styles.container}>
       {activeEmergencyInsight && (
-        <View style={[styles.emergencyOverlay, { backgroundColor: isDark ? 'rgba(0, 0, 0, 0.8)' : 'rgba(0, 0, 0, 0.5)' }]}>
-          <View style={[styles.emergencyModal, { backgroundColor: colors.card }]}>
+        <View style={styles.emergencyOverlay}>
+          <View style={styles.emergencyModal}>
             <View style={styles.emergencyIcon}>
-              <View style={[styles.emergencyIconCircle, { backgroundColor: colors.destructive }]}>
+              <View style={styles.emergencyIconCircle}>
                 <Text style={styles.emergencyIconExclamation}>!</Text>
               </View>
             </View>
-            <Text style={[styles.emergencyTitle, { color: colors.foreground }]}>{activeEmergencyInsight.title}</Text>
-            <Text style={[styles.emergencyMessage, { color: colors.mutedForeground }]}>
+            <Text style={styles.emergencyTitle}>{activeEmergencyInsight.title}</Text>
+            <Text style={styles.emergencyMessage}>
               {activeEmergencyInsight.message || 'We detected a potential emergency situation.'}
             </Text>
             <View style={styles.emergencyActions}>
               <TouchableOpacity
-                style={[styles.emergencyDismissButton, { backgroundColor: colors.muted, borderColor: colors.border }]}
+                style={styles.emergencyDismissButton}
                 onPress={() => setActiveEmergencyInsight(null)}
               >
-                <Text style={[styles.emergencyDismissText, { color: colors.foreground }]}>Dismiss</Text>
+                <Text style={styles.emergencyDismissText}>Dismiss</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.emergencyCallButton, { backgroundColor: colors.destructive }]}
+                style={styles.emergencyCallButton}
                 onPress={() => {
                   setActiveEmergencyInsight(null);
                   onEmergency();
@@ -309,12 +308,12 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
         </View>
       )}
 
-      <ScrollView contentContainerStyle={[styles.scrollContent, { backgroundColor: colors.background }]}>
+      <ScrollView contentContainerStyle={styles.scrollContent}>
         {/* Header */}
-        <View style={[styles.header, { backgroundColor: colors.background }]}>
+        <View style={styles.header}>
           <View style={styles.headerTop}>
             <Text 
-              style={[styles.greeting, { color: colors.foreground }]}
+              style={styles.greeting}
               numberOfLines={1}
               adjustsFontSizeToFit={true}
               minimumFontScale={0.7}
@@ -323,40 +322,23 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
             </Text>
             {onLogout && (
               <TouchableOpacity onPress={onLogout} style={styles.logoutIconButton}>
-                <Ionicons name="log-out" size={24} color={colors.mutedForeground} />
+                <Ionicons name="log-out" size={24} color="#6b7280" />
               </TouchableOpacity>
             )}
           </View>
           
           {/* Connection Status */}
           <View style={styles.connectionStatus}>
-            <View style={[styles.statusBadge, { 
-              backgroundColor: isDark ? '#1a2e1a' : '#f0fdf4',
-              borderColor: isDark ? '#22c55e' : '#bbf7d0'
-            }]}>
-              <Ionicons name="watch" size={16} color={isDark ? '#86efac' : '#166534'} />
-              <Text style={[styles.statusText, { color: isDark ? '#86efac' : '#166534' }]}>Apple Watch</Text>
-              <Ionicons name="wifi" size={16} color={isDark ? '#86efac' : '#166534'} />
+            <View style={styles.statusBadge}>
+              <Ionicons name="watch" size={16} color="#166534" />
+              <Text style={styles.statusText}>Apple Watch</Text>
+              <Ionicons name="wifi" size={16} color="#166534" />
             </View>
-            <View style={[styles.statusBadge, { 
-              backgroundColor: isDark ? '#1a2e1a' : '#f0fdf4',
-              borderColor: isDark ? '#22c55e' : '#bbf7d0'
-            }]}>
-              <Ionicons name="water" size={16} color={isDark ? '#86efac' : '#166534'} />
-              <Text style={[styles.statusText, { color: isDark ? '#86efac' : '#166534' }]}>Dexcom</Text>
-              <Ionicons name="wifi" size={16} color={isDark ? '#86efac' : '#166534'} />
+            <View style={styles.statusBadge}>
+              <Ionicons name="water" size={16} color="#166534" />
+              <Text style={styles.statusText}>Dexcom</Text>
+              <Ionicons name="wifi" size={16} color="#166534" />
             </View>
-            {/* Dark Mode Toggle */}
-            <TouchableOpacity 
-              onPress={toggleTheme} 
-              style={styles.themeToggleButton}
-            >
-              <Ionicons 
-                name={isDark ? "sunny" : "moon"} 
-                size={20} 
-                color={colors.foreground} 
-              />
-            </TouchableOpacity>
           </View>
         </View>
 
@@ -364,23 +346,18 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
         {notification.show && (
           <View style={[
             styles.notification,
-            notification.confirmed 
-              ? { backgroundColor: isDark ? '#1a2e1a' : '#f0fdf4', borderColor: isDark ? '#22c55e' : '#bbf7d0' }
-              : { backgroundColor: isDark ? '#2e2e1a' : '#fefce8', borderColor: isDark ? '#eab308' : '#fde047' }
+            notification.confirmed ? styles.notificationConfirmed : styles.notificationWarning
           ]}>
             <Text style={[
               styles.notificationText,
-              { color: notification.confirmed 
-                ? (isDark ? '#86efac' : '#166534')
-                : (isDark ? '#fde047' : '#854d0e')
-              }
+              notification.confirmed && styles.notificationTextConfirmed
             ]}>
               {notification.confirmed ? '✓ Action confirmed' : notification.message}
             </Text>
             {!notification.confirmed && (
               <TouchableOpacity
                 onPress={handleConfirm}
-                style={[styles.confirmButton, { backgroundColor: isDark ? '#eab308' : '#eab308' }]}
+                style={styles.confirmButton}
               >
                 <Ionicons name="checkmark" size={20} color="#ffffff" />
                 <Text style={styles.confirmButtonText}>Confirm Action</Text>
@@ -390,34 +367,22 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
         )}
 
         {/* Tab Navigation */}
-        <View style={[styles.tabContainer, { backgroundColor: isDark ? colors.muted : '#f3f4f6' }]}>
+        <View style={styles.tabContainer}>
           <TouchableOpacity
-            style={[
-              styles.tab, 
-              activeTab === 'status' && [styles.tabActive, { backgroundColor: colors.primary }]
-            ]}
+            style={[styles.tab, activeTab === 'status' && styles.tabActive]}
             onPress={() => setActiveTab('status')}
           >
-            <Ionicons name="pulse" size={20} color={activeTab === 'status' ? '#ffffff' : colors.mutedForeground} />
-            <Text style={[
-              styles.tabLabel, 
-              { color: activeTab === 'status' ? '#ffffff' : colors.mutedForeground }
-            ]}>Status</Text>
+            <Ionicons name="pulse" size={20} color={activeTab === 'status' ? '#2563eb' : '#6b7280'} />
+            <Text style={[styles.tabLabel, activeTab === 'status' && styles.tabLabelActive]}>Status</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[
-              styles.tab, 
-              activeTab === 'suggestions' && [styles.tabActive, { backgroundColor: colors.primary }]
-            ]}
+            style={[styles.tab, activeTab === 'suggestions' && styles.tabActive]}
             onPress={() => setActiveTab('suggestions')}
           >
-            <Ionicons name="bulb" size={20} color={activeTab === 'suggestions' ? '#ffffff' : colors.mutedForeground} />
-            <Text style={[
-              styles.tabLabel, 
-              { color: activeTab === 'suggestions' ? '#ffffff' : colors.mutedForeground }
-            ]}>Suggestions</Text>
+            <Ionicons name="bulb" size={20} color={activeTab === 'suggestions' ? '#2563eb' : '#6b7280'} />
+            <Text style={[styles.tabLabel, activeTab === 'suggestions' && styles.tabLabelActive]}>Suggestions</Text>
             {insights.length > 0 && (
-              <View style={[styles.tabBadge, { backgroundColor: colors.destructive }]}>
+              <View style={styles.tabBadge}>
                 <Text style={styles.tabBadgeText}>{insights.length}</Text>
               </View>
             )}
@@ -461,8 +426,8 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
 
         {/* Voice Assist Indicator */}
         <View style={styles.voiceAssistContainer}>
-          <View style={[styles.voiceAssistBadge, { backgroundColor: isDark ? colors.muted : '#dbeafe' }]}>
-            <Text style={[styles.voiceAssistText, { color: isDark ? colors.foreground : '#1e40af' }]}>🎙️ Voice assist available</Text>
+          <View style={styles.voiceAssistBadge}>
+            <Text style={styles.voiceAssistText}>🎙️ Voice assist available</Text>
           </View>
         </View>
           </>
@@ -473,17 +438,17 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
           <View style={styles.suggestionsContent}>
             {insights.length > 0 ? (
               <>
-                <Text style={[styles.insightsTitle, { color: colors.foreground }]}>Suggestions for Today</Text>
+                <Text style={styles.insightsTitle}>Suggestions for Today</Text>
                 {insights.map((insight, index) => (
                   <View
                     key={`${insight.title}-${index}`}
                     style={[
                       styles.insightCardCompact,
                       insight.severity === 'critical'
-                        ? { backgroundColor: isDark ? '#2e1a1a' : '#fef2f2', borderColor: isDark ? '#ef4444' : '#fca5a5' }
+                        ? styles.insightCardCritical
                         : insight.severity === 'warning'
-                          ? { backgroundColor: isDark ? '#2e2e1a' : '#fefce8', borderColor: isDark ? '#eab308' : '#fde047' }
-                          : { backgroundColor: isDark ? colors.muted : '#eff6ff', borderColor: isDark ? colors.border : '#bfdbfe' },
+                          ? styles.insightCardWarning
+                          : styles.insightCardInfo,
                     ]}
                   >
                     <View style={styles.insightHeaderCompact}>
@@ -498,38 +463,37 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
                         size={18}
                         color={
                           insight.severity === 'critical'
-                            ? (isDark ? '#fca5a5' : '#991b1b')
+                            ? '#991b1b'
                             : insight.severity === 'warning'
-                              ? (isDark ? '#fde047' : '#854d0e')
-                              : colors.primary
+                              ? '#854d0e'
+                              : '#2563eb'
                         }
                       />
                       <Text
                         style={[
                           styles.insightTitleCompact,
-                          { color: insight.severity === 'critical'
-                            ? (isDark ? '#fca5a5' : '#991b1b')
+                          insight.severity === 'critical'
+                            ? styles.insightTitleCritical
                             : insight.severity === 'warning'
-                              ? (isDark ? '#fde047' : '#854d0e')
-                              : colors.primary
-                          }
+                              ? styles.insightTitleWarning
+                              : styles.insightTitleInfo,
                         ]}
                         numberOfLines={1}
                       >
                         {insight.title}
                       </Text>
                       {insight.notifyGuardian && (
-                        <View style={[styles.guardianBadgeCompact, { backgroundColor: isDark ? colors.muted : '#dbeafe' }]}>
-                          <Ionicons name="notifications" size={12} color={colors.primary} />
+                        <View style={styles.guardianBadgeCompact}>
+                          <Ionicons name="notifications" size={12} color="#1d4ed8" />
                         </View>
                       )}
                     </View>
-                    <Text style={[styles.insightMessageCompact, { color: isDark ? colors.mutedForeground : '#4b5563' }]} numberOfLines={2}>
+                    <Text style={styles.insightMessageCompact} numberOfLines={2}>
                       {insight.message}
                     </Text>
                     {insight.severity === 'critical' && (
                       <TouchableOpacity 
-                        style={[styles.insightPrimaryButtonCompact, { backgroundColor: colors.destructive }]}
+                        style={styles.insightPrimaryButtonCompact}
                         onPress={() => {
                           setSelectedInsight(insight);
                           setShowActionSheet(true);
@@ -543,8 +507,8 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
               </>
             ) : (
               <View style={styles.emptyState}>
-                <Ionicons name="bulb-outline" size={64} color={colors.mutedForeground} />
-                <Text style={[styles.emptyStateText, { color: colors.mutedForeground }]}>No suggestions at this time</Text>
+                <Ionicons name="bulb-outline" size={64} color="#d1d5db" />
+                <Text style={styles.emptyStateText}>No suggestions at this time</Text>
               </View>
             )}
           </View>
@@ -552,7 +516,7 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
       </ScrollView>
 
       {/* Emergency Button - Fixed at Bottom */}
-      <View style={[styles.emergencyContainer, { backgroundColor: colors.background, borderTopColor: colors.border }]}>
+      <View style={styles.emergencyContainer}>
         <TouchableOpacity
           onPress={onEmergency}
           style={styles.emergencyButton}
@@ -569,25 +533,25 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
         animationType="slide"
         onRequestClose={() => setShowActionSheet(false)}
       >
-        <View style={[styles.modalOverlay, { backgroundColor: isDark ? 'rgba(0, 0, 0, 0.8)' : 'rgba(0, 0, 0, 0.5)' }]}>
-          <View style={[styles.actionSheet, { backgroundColor: colors.card }]}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.actionSheet}>
             <View style={styles.actionSheetHeader}>
-              <Text style={[styles.actionSheetTitle, { color: colors.foreground }]}>Select Action</Text>
+              <Text style={styles.actionSheetTitle}>Select Action</Text>
               <TouchableOpacity
                 onPress={() => setShowActionSheet(false)}
                 style={styles.actionSheetCloseButton}
               >
-                <Ionicons name="close" size={24} color={colors.mutedForeground} />
+                <Ionicons name="close" size={24} color="#6b7280" />
               </TouchableOpacity>
             </View>
             {selectedInsight && (
               <View style={styles.actionSheetContent}>
-                <Text style={[styles.actionSheetMessage, { color: colors.mutedForeground }]}>{selectedInsight.message}</Text>
+                <Text style={styles.actionSheetMessage}>{selectedInsight.message}</Text>
               </View>
             )}
             <View style={styles.actionSheetButtons}>
               <TouchableOpacity
-                style={[styles.actionSheetButton, { backgroundColor: colors.destructive }]}
+                style={[styles.actionSheetButton, styles.actionSheetButtonCall]}
                 onPress={() => {
                   setShowActionSheet(false);
                   onEmergency();
@@ -597,7 +561,7 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
                 <Text style={styles.actionSheetButtonText}>Call</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.actionSheetButton, { backgroundColor: colors.muted, borderColor: colors.border }]}
+                style={[styles.actionSheetButton, styles.actionSheetButtonDismiss]}
                 onPress={() => {
                   setShowActionSheet(false);
                   setSelectedInsight(null);
@@ -607,8 +571,8 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
                   }
                 }}
               >
-                <Ionicons name="close-circle" size={20} color={colors.mutedForeground} />
-                <Text style={[styles.actionSheetButtonText, { color: colors.mutedForeground }]}>Dismiss</Text>
+                <Ionicons name="close-circle" size={20} color="#6b7280" />
+                <Text style={[styles.actionSheetButtonText, { color: '#6b7280' }]}>Dismiss</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -621,6 +585,7 @@ export function ResidentDashboard({ name, onEmergency, onLogout }: ResidentDashb
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#ffffff',
   },
   centerContent: {
     justifyContent: 'center',
@@ -629,10 +594,12 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 16,
+    color: '#6b7280',
     marginTop: 16,
   },
   errorText: {
     fontSize: 16,
+    color: '#dc2626',
     textAlign: 'center',
     marginTop: 16,
   },
@@ -640,6 +607,7 @@ const styles = StyleSheet.create({
     marginTop: 16,
     paddingHorizontal: 24,
     paddingVertical: 12,
+    backgroundColor: '#2563eb',
     borderRadius: 8,
   },
   retryButtonText: {
@@ -662,6 +630,7 @@ const styles = StyleSheet.create({
   greeting: {
     fontSize: 28,
     fontWeight: 'bold',
+    color: '#111827',
     flex: 1,
     flexShrink: 1,
   },
@@ -671,13 +640,6 @@ const styles = StyleSheet.create({
   connectionStatus: {
     flexDirection: 'row',
     gap: 16,
-    alignItems: 'center',
-  },
-  themeToggleButton: {
-    padding: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'transparent',
   },
   statusBadge: {
     flexDirection: 'row',
@@ -685,11 +647,14 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 16,
     paddingVertical: 8,
+    backgroundColor: '#f0fdf4',
     borderRadius: 999,
     borderWidth: 1,
+    borderColor: '#bbf7d0',
   },
   statusText: {
     fontSize: 14,
+    color: '#166534',
   },
   notification: {
     padding: 24,
@@ -1004,14 +969,16 @@ const styles = StyleSheet.create({
     right: 0,
     padding: 24,
     paddingBottom: 60,
+    backgroundColor: '#ffffff',
     borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
   },
   emergencyButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     height: 64,
-    backgroundColor: '#dc2626', // Always red regardless of theme
+    backgroundColor: '#dc2626',
     borderRadius: 32,
     gap: 12,
     shadowColor: '#000',

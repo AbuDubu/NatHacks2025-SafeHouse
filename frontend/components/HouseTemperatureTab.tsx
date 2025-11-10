@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { apiClient, Sensor, SensorReading } from '../lib/api';
-import { useTheme } from '../contexts/ThemeContext';
 
 interface TemperatureSensor {
   sensor: Sensor;
@@ -11,7 +10,6 @@ interface TemperatureSensor {
 }
 
 export function HouseTemperatureTab() {
-  const { colors, isDark } = useTheme();
   const [temperatureSensors, setTemperatureSensors] = useState<TemperatureSensor[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -135,19 +133,19 @@ export function HouseTemperatureTab() {
 
   if (loading && temperatureSensors.length === 0) {
     return (
-      <View style={[styles.container, styles.centerContent, { backgroundColor: colors.background }]}>
-        <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>Loading temperature sensors...</Text>
+      <View style={[styles.container, styles.centerContent]}>
+        <ActivityIndicator size="large" color="#2563eb" />
+        <Text style={styles.loadingText}>Loading temperature sensors...</Text>
       </View>
     );
   }
 
   if (error && temperatureSensors.length === 0) {
     return (
-      <View style={[styles.container, styles.centerContent, { backgroundColor: colors.background }]}>
-        <Ionicons name="alert-circle" size={48} color={colors.destructive} />
-        <Text style={[styles.errorText, { color: colors.destructive }]}>{error}</Text>
-        <TouchableOpacity onPress={loadTemperatureData} style={[styles.retryButton, { backgroundColor: colors.primary }]}>
+      <View style={[styles.container, styles.centerContent]}>
+        <Ionicons name="alert-circle" size={48} color="#dc2626" />
+        <Text style={styles.errorText}>{error}</Text>
+        <TouchableOpacity onPress={loadTemperatureData} style={styles.retryButton}>
           <Text style={styles.retryButtonText}>Retry</Text>
         </TouchableOpacity>
       </View>
@@ -155,16 +153,16 @@ export function HouseTemperatureTab() {
   }
 
   return (
-    <ScrollView contentContainerStyle={[styles.container, { backgroundColor: colors.background }]}>
+    <ScrollView contentContainerStyle={styles.container}>
       <View style={styles.header}>
-        <Text style={[styles.title, { color: colors.foreground }]}>House Temperature</Text>
-        <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>Monitor temperature across all rooms</Text>
+        <Text style={styles.title}>House Temperature</Text>
+        <Text style={styles.subtitle}>Monitor temperature across all rooms</Text>
       </View>
 
       {temperatureSensors.length === 0 ? (
         <View style={styles.emptyState}>
-          <Ionicons name="thermometer" size={64} color={colors.mutedForeground} />
-          <Text style={[styles.emptyStateText, { color: colors.mutedForeground }]}>No temperature sensors found</Text>
+          <Ionicons name="thermometer" size={64} color="#d1d5db" />
+          <Text style={styles.emptyStateText}>No temperature sensors found</Text>
         </View>
       ) : (
         <View style={styles.sensorsList}>
@@ -185,9 +183,7 @@ export function HouseTemperatureTab() {
               >
                 <View style={styles.sensorHeader}>
                   <View style={styles.sensorInfo}>
-                    <View style={[styles.sensorIconContainer, {
-                      backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.5)',
-                    }]}>
+                    <View style={styles.sensorIconContainer}>
                       <Ionicons name="thermometer" size={32} color={statusColors.icon} />
                     </View>
                     <View style={styles.sensorDetails}>
@@ -251,6 +247,7 @@ const styles = StyleSheet.create({
   container: {
     padding: 24,
     paddingBottom: 100,
+    backgroundColor: '#f9fafb',
   },
   centerContent: {
     justifyContent: 'center',
@@ -260,10 +257,12 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 16,
+    color: '#6b7280',
     marginTop: 16,
   },
   errorText: {
     fontSize: 16,
+    color: '#dc2626',
     textAlign: 'center',
     marginTop: 16,
   },
@@ -271,6 +270,7 @@ const styles = StyleSheet.create({
     marginTop: 16,
     paddingHorizontal: 24,
     paddingVertical: 12,
+    backgroundColor: '#2563eb',
     borderRadius: 8,
   },
   retryButtonText: {
@@ -283,10 +283,12 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: 'bold',
+    color: '#111827',
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 16,
+    color: '#6b7280',
   },
   sensorsList: {
     gap: 16,
@@ -317,6 +319,7 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
+    backgroundColor: 'rgba(255, 255, 255, 0.5)',
     alignItems: 'center',
     justifyContent: 'center',
   },
