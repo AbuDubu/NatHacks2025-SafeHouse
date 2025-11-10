@@ -134,6 +134,12 @@ def create_bulk_readings(bulk_data: SensorReadingBulkCreate, db: Session = Depen
     # Find all sensors for this device
     sensors = db.query(Sensor).filter(Sensor.device_id == bulk_data.device_id).all()
     
+    if not sensors:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No sensors found for device_id: {bulk_data.device_id}"
+        )
+    
     # Create a map of sensor_type to sensor
     sensor_map = {s.sensor_type: s for s in sensors}
     

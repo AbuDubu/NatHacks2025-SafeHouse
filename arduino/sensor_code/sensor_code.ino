@@ -4,6 +4,7 @@
 
 #define DHTPIN 4
 #define DHTTYPE DHT11
+#define BUTTON 38
 
 // wifi and ser
 const char* ssid = "Nat";

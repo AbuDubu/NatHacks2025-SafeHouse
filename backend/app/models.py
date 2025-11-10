@@ -26,9 +26,6 @@ class SensorType(str, enum.Enum):
     FALL_DETECTION = "fall_detection"
     DOOR = "door"
     WATER_LEAK = "water_leak"
-    GLUCOSE = "glucose"  # For Apple Health blood glucose
-    SLEEP = "sleep"  # For Apple Health sleep data
-    STEP_COUNT = "step_count"  # For Apple Health step count
 
 
 class AlertLevel(str, enum.Enum):
