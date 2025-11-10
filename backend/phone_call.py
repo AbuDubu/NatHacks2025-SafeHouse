@@ -322,23 +322,10 @@ def get_latest_temperature_reading(db: Session, sensor_id: int = None):
     if sensor_id:
         reading = db.query(SensorReading).filter(
             SensorReading.sensor_id == sensor_id
-        ).order_by(SensorReading.timestamp.desc()).first()
+        ).order_by(SensorReading.id.desc()).first()
         return reading
     
-    # Otherwise, get from phone-call-monitor sensor first, then any temperature sensor
-    phone_monitor_sensor = db.query(Sensor).filter(
-        Sensor.device_id == "phone-call-monitor",
-        Sensor.sensor_type == SensorType.TEMPERATURE
-    ).first()
-    
-    if phone_monitor_sensor:
-        reading = db.query(SensorReading).filter(
-            SensorReading.sensor_id == phone_monitor_sensor.id
-        ).order_by(SensorReading.timestamp.desc()).first()
-        if reading:
-            return reading
-    
-    # Fallback: get from any temperature sensor
+    # Get ALL temperature sensors
     sensors = db.query(Sensor).filter(
         Sensor.sensor_type == SensorType.TEMPERATURE
     ).all()
@@ -346,10 +333,12 @@ def get_latest_temperature_reading(db: Session, sensor_id: int = None):
     if not sensors:
         return None
     
+    # Get the most recent reading across ALL temperature sensors
+    # Order by ID (desc) to get the absolute latest, regardless of which sensor
     sensor_ids = [s.id for s in sensors]
     reading = db.query(SensorReading).filter(
         SensorReading.sensor_id.in_(sensor_ids)
-    ).order_by(SensorReading.timestamp.desc()).first()
+    ).order_by(SensorReading.id.desc()).first()
     
     return reading
 
