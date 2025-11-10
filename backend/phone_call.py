@@ -9,6 +9,7 @@ import threading
 import time
 from datetime import datetime
 from sqlalchemy.orm import Session
+import statistics
 
 # Database imports
 from app.database import SessionLocal, init_db
@@ -31,6 +32,9 @@ WARNING_THRESHOLD = 98.0  # Warning threshold - send SMS
 
 # Track last processed reading ID to avoid duplicate alerts
 last_processed_reading_id = None
+
+# Track last processed anomaly reading ID to avoid duplicate anomaly alerts
+last_processed_anomaly_reading_id = None
 
 # Track if user confirmed OK (pressed 1) during call
 user_confirmed_ok = False
@@ -89,14 +93,14 @@ async def temperature_response(request: Request):
     if digits == "1":
         # User pressed 1 - everything is OK
         user_confirmed_ok = True
-        print("✅ User confirmed everything is OK (pressed 1) - setting flag")
+        print("User confirmed everything is OK (pressed 1) - setting flag")
         return Response(
             content='<Response><Say voice="alice">Thank you for confirming. We will continue monitoring. Stay safe.</Say><Hangup/></Response>',
             media_type="application/xml"
         )
     elif digits == "2":
         # User pressed 2 - needs emergency assistance
-        print("🚨 User requested emergency assistance (pressed 2)")
+        print("User requested emergency assistance (pressed 2)")
         # Trigger emergency call to Abu in background
         def call_emergency():
             if client:
@@ -118,7 +122,7 @@ async def temperature_response(request: Request):
         )
     else:
         # No valid input or timeout
-        print("⚠️ No valid response from user - will escalate after call check")
+        print("No valid response from user - will escalate after call check")
         return Response(
             content='<Response><Say voice="alice">No response received. We will check back with you shortly.</Say><Hangup/></Response>',
             media_type="application/xml"
@@ -209,7 +213,7 @@ def home():
 </head>
 <body>
     <div class="container">
-        <h1>🌡️ SafeHouse Temperature Monitor</h1>
+        <h1>SafeHouse Temperature Monitor</h1>
         <div class="info">
             <strong>Warning Threshold:</strong> 98°F (SMS alerts)<br>
             <strong>Danger Threshold:</strong> 100°F (Emergency calls)<br>
@@ -242,18 +246,18 @@ def home():
                 alertDiv.style.display = 'block';
                 if (data.status === 'alert_triggered') {
                     alertDiv.className = 'alert error';
-                    alertDiv.textContent = '🚨 DANGER! Temperature ' + temp + '°F exceeds threshold. Emergency calls are being initiated...';
+                    alertDiv.textContent = 'DANGER! Temperature ' + temp + '°F exceeds threshold. Emergency calls are being initiated...';
                 } else if (data.status === 'warning_sent') {
                     alertDiv.className = 'alert success';
-                    alertDiv.textContent = '⚠️ WARNING! Temperature ' + temp + '°F is near threshold. SMS alerts sent to you and emergency contact.';
+                    alertDiv.textContent = 'WARNING! Temperature ' + temp + '°F is near threshold. SMS alerts sent to you and emergency contact.';
                 } else {
                     alertDiv.className = 'alert success';
-                    alertDiv.textContent = '✅ Temperature ' + temp + '°F recorded. No alert needed.';
+                    alertDiv.textContent = 'Temperature ' + temp + '°F recorded. No alert needed.';
                 }
             } catch (error) {
                 alertDiv.style.display = 'block';
                 alertDiv.className = 'alert error';
-                alertDiv.textContent = '❌ Error: ' + error.message;
+                alertDiv.textContent = 'Error: ' + error.message;
             }
         });
     </script>
@@ -312,9 +316,29 @@ def save_temperature_to_db(temperature: float, unit: str = "°F"):
     finally:
         db.close()
 
-def get_latest_temperature_reading(db: Session):
-    """Get the most recent temperature reading from any temperature sensor in database"""
-    # Get all temperature sensors
+def get_latest_temperature_reading(db: Session, sensor_id: int = None):
+    """Get the most recent temperature reading from temperature sensor(s) in database"""
+    # If specific sensor_id provided, use that
+    if sensor_id:
+        reading = db.query(SensorReading).filter(
+            SensorReading.sensor_id == sensor_id
+        ).order_by(SensorReading.timestamp.desc()).first()
+        return reading
+    
+    # Otherwise, get from phone-call-monitor sensor first, then any temperature sensor
+    phone_monitor_sensor = db.query(Sensor).filter(
+        Sensor.device_id == "phone-call-monitor",
+        Sensor.sensor_type == SensorType.TEMPERATURE
+    ).first()
+    
+    if phone_monitor_sensor:
+        reading = db.query(SensorReading).filter(
+            SensorReading.sensor_id == phone_monitor_sensor.id
+        ).order_by(SensorReading.timestamp.desc()).first()
+        if reading:
+            return reading
+    
+    # Fallback: get from any temperature sensor
     sensors = db.query(Sensor).filter(
         Sensor.sensor_type == SensorType.TEMPERATURE
     ).all()
@@ -322,15 +346,163 @@ def get_latest_temperature_reading(db: Session):
     if not sensors:
         return None
     
-    # Get sensor IDs
     sensor_ids = [s.id for s in sensors]
-    
-    # Get the most recent reading from any temperature sensor
     reading = db.query(SensorReading).filter(
         SensorReading.sensor_id.in_(sensor_ids)
     ).order_by(SensorReading.timestamp.desc()).first()
     
     return reading
+
+def get_recent_temperature_readings(db: Session, sensor_id: int, before_reading_id: int, count: int = 10):
+    """Get recent temperature readings BEFORE a specific reading (for baseline)"""
+    # Get readings that come BEFORE the specified reading_id
+    # Order by timestamp desc to get most recent first, but exclude the current reading
+    readings = db.query(SensorReading).filter(
+        SensorReading.sensor_id == sensor_id,
+        SensorReading.id < before_reading_id  # Only readings before this one
+    ).order_by(SensorReading.timestamp.desc()).limit(count).all()
+    
+    return readings
+
+def calculate_z_score(value: float, mean: float, std_dev: float) -> float:
+    """Calculate Z-score for a value"""
+    if std_dev == 0:
+        return 0  # No variation, can't calculate Z-score
+    return (value - mean) / std_dev
+
+def detect_temperature_anomaly(
+    current_reading: SensorReading,
+    recent_readings: list,
+    threshold: float = 2.5
+) -> dict:
+    """
+    Detect if a temperature reading is anomalous using Z-score
+    
+    Args:
+        current_reading: The reading to check
+        recent_readings: List of recent readings BEFORE current (for baseline)
+        threshold: Z-score threshold (default 2.5)
+    
+    Returns:
+        dict with anomaly status and details
+    """
+    if len(recent_readings) < 3:
+        # Need at least 3 readings to calculate meaningful stats
+        return {
+            "is_anomaly": False,
+            "reason": f"Not enough baseline data (have {len(recent_readings)}, need 3+)"
+        }
+    
+    # recent_readings already excludes the current reading (they're all before it)
+    # Extract values from baseline readings
+    values = [r.value for r in recent_readings]
+    
+    # Filter outliers from baseline to get a cleaner baseline
+    # Use median-based filtering: remove values that are far from the median
+    if len(values) >= 4:
+        median = statistics.median(values)
+        # Calculate median absolute deviation (MAD) for robust outlier detection
+        mad_values = [abs(v - median) for v in values]
+        mad = statistics.median(mad_values) if mad_values else 0
+        
+        if mad > 0:
+            # Filter out values that are more than 3 MAD away from median
+            # This is more robust than mean/std dev for outlier detection
+            threshold_mad = 3.0
+            filtered_values = [v for v in values if abs(v - median) <= threshold_mad * mad]
+            
+            # Use filtered values if we still have at least 3 values
+            if len(filtered_values) >= 3:
+                values = filtered_values
+                print(f"   Filtered baseline: {len(recent_readings)} -> {len(values)} readings (removed outliers using MAD)")
+    
+    # Calculate mean and standard deviation from (possibly filtered) baseline
+    mean = statistics.mean(values)
+    std_dev = statistics.stdev(values) if len(values) > 1 else 0
+    
+    if std_dev == 0:
+        return {
+            "is_anomaly": False,
+            "reason": "No variation in baseline data"
+        }
+    
+    # Calculate Z-score for current reading
+    z_score = calculate_z_score(current_reading.value, mean, std_dev)
+    
+    # Debug output
+    print(f"   Stats: Mean={mean:.2f}°F, StdDev={std_dev:.2f}°F, Current={current_reading.value}°F, Z-score={z_score:.2f}, Threshold={threshold}")
+    
+    # Determine if anomaly
+    is_anomaly = abs(z_score) > threshold
+    
+    # Determine severity
+    if abs(z_score) > 3.0:
+        severity = "critical"
+    elif abs(z_score) > 2.5:
+        severity = "warning"
+    else:
+        severity = "normal"
+    
+    return {
+        "is_anomaly": is_anomaly,
+        "z_score": round(z_score, 2),
+        "current_value": current_reading.value,
+        "mean": round(mean, 2),
+        "std_dev": round(std_dev, 2),
+        "threshold": threshold,
+        "severity": severity,
+        "baseline_count": len(recent_readings)
+    }
+
+def check_and_alert_anomaly(reading: SensorReading, db: Session):
+    """Check if reading is anomalous and send SMS alert if needed"""
+    global last_processed_anomaly_reading_id
+    
+    # Skip if we've already processed this reading
+    if reading.id == last_processed_anomaly_reading_id:
+        return
+    
+    # Get the 10 readings BEFORE this one (for baseline)
+    recent_readings = get_recent_temperature_readings(db, reading.sensor_id, reading.id, count=10)
+    
+    if len(recent_readings) > 0:
+        baseline_values = [r.value for r in recent_readings]
+        print(f"Checking anomaly for reading {reading.id} ({reading.value}°F). Baseline ({len(recent_readings)} readings): {baseline_values}")
+    else:
+        print(f"Checking anomaly for reading {reading.id} ({reading.value}°F). Baseline: {len(recent_readings)} readings (need 3+)")
+    
+    # Check for anomaly
+    anomaly_result = detect_temperature_anomaly(reading, recent_readings, threshold=2.5)
+    
+    if anomaly_result.get("is_anomaly"):
+        # Send SMS warning to user
+        my_number = os.getenv("MY_PHONE_NUMBER")
+        if my_number:
+            z_score = anomaly_result["z_score"]
+            current_temp = anomaly_result["current_value"]
+            mean_temp = anomaly_result["mean"]
+            severity = anomaly_result["severity"]
+            
+            if severity == "critical":
+                message = f"CRITICAL ANOMALY: Temperature {current_temp}°F detected (Z-score: {z_score}). Normal range: {mean_temp}°F. Please check immediately!"
+            else:
+                message = f"Temperature Anomaly: {current_temp}°F detected (Z-score: {z_score}). Normal range: {mean_temp}°F. Please monitor."
+            
+            print(f"Sending anomaly SMS: {current_temp}°F (Z-score: {z_score}, severity: {severity})")
+            threading.Thread(
+                target=lambda: send_sms(my_number, message),
+                daemon=True
+            ).start()
+            
+            print(f"Anomaly SMS queued: {current_temp}°F (Z-score: {z_score}, severity: {severity})")
+        else:
+            print("MY_PHONE_NUMBER not set - cannot send anomaly SMS")
+        
+        # Mark as processed
+        last_processed_anomaly_reading_id = reading.id
+    else:
+        reason = anomaly_result.get("reason", "Normal")
+        print(f"No anomaly detected: {reason}")
 
 def send_sms(to_number: str, message: str):
     """Send SMS using Twilio"""
@@ -365,19 +537,19 @@ def check_temperature_and_alert(temperature: float, reading_id: int = None):
     
     if temperature >= TEMPERATURE_THRESHOLD:
         # DANGER: Temperature exceeded threshold - trigger call escalation
-        print(f"🚨 DANGER! Temperature {temperature}°F exceeds threshold {TEMPERATURE_THRESHOLD}°F. Triggering alert sequence...")
+        print(f"DANGER! Temperature {temperature}°F exceeds threshold {TEMPERATURE_THRESHOLD}°F. Triggering alert sequence...")
         threading.Thread(target=escalate_calls, daemon=True).start()
         if reading_id is not None:
             last_processed_reading_id = reading_id
         return "alert_triggered"
     elif temperature >= WARNING_THRESHOLD:
         # WARNING: Temperature is near threshold - send SMS alerts
-        print(f"⚠️ WARNING! Temperature {temperature}°F is near threshold (warning at {WARNING_THRESHOLD}°F). Sending SMS alerts...")
+        print(f"WARNING! Temperature {temperature}°F is near threshold (warning at {WARNING_THRESHOLD}°F). Sending SMS alerts...")
         
         my_number = os.getenv("MY_PHONE_NUMBER")
         abus_number = os.getenv("ABUS_NUMBER")
         
-        warning_message = f"⚠️ SafeHouse Alert: Temperature is {temperature}°F (threshold: {TEMPERATURE_THRESHOLD}°F). Please monitor your home."
+        warning_message = f"SafeHouse Alert: Temperature is {temperature}°F (threshold: {TEMPERATURE_THRESHOLD}°F). Please monitor your home."
         
         # Send SMS to user
         if my_number:
@@ -388,7 +560,7 @@ def check_temperature_and_alert(temperature: float, reading_id: int = None):
         
         # Send SMS to emergency contact
         if abus_number:
-            emergency_message = f"⚠️ SafeHouse Alert: {os.getenv('MY_PHONE_NUMBER', 'User')}'s home temperature is {temperature}°F (approaching danger threshold of {TEMPERATURE_THRESHOLD}°F). Please check on them."
+            emergency_message = f"SafeHouse Alert: {os.getenv('MY_PHONE_NUMBER', 'User')}'s home temperature is {temperature}°F (approaching danger threshold of {TEMPERATURE_THRESHOLD}°F). Please check on them."
             threading.Thread(
                 target=lambda: send_sms(abus_number, emergency_message),
                 daemon=True
@@ -494,17 +666,17 @@ def check_call_status(call_sid, max_wait=40):
                 was_in_progress = True
                 if in_progress_start is None:
                     in_progress_start = time.time()
-                    print(f"📞 Call went in-progress at {time.time() - start_time:.1f}s")
+                    print(f"Call went in-progress at {time.time() - start_time:.1f}s")
                 else:
                     # Check if it's been in-progress for at least 5 seconds
                     time_in_progress = time.time() - in_progress_start
                     if time_in_progress >= 5:
-                        print(f"✅ Call has been in-progress for {time_in_progress:.1f} seconds - confirmed answered")
+                        print(f"Call has been in-progress for {time_in_progress:.1f} seconds - confirmed answered")
                         return True  # Been in progress for 5+ seconds, definitely answered
             else:
                 # Status changed from in-progress, reset
                 if in_progress_start is not None:
-                    print(f"⚠️ Call status changed from in-progress to {status}")
+                    print(f"Call status changed from in-progress to {status}")
                 in_progress_start = None
             
             # If call completed, check duration
@@ -512,11 +684,11 @@ def check_call_status(call_sid, max_wait=40):
                 duration = int(call.duration) if call.duration else 0
                 answered_by = getattr(call, 'answered_by', None)
                 
-                print(f"📞 Call completed. Duration: {duration}s, Answered by: {answered_by}, Was in-progress: {was_in_progress}")
+                print(f"Call completed. Duration: {duration}s, Answered by: {answered_by}, Was in-progress: {was_in_progress}")
                 
                 # If call was ever in-progress, it was answered
                 if was_in_progress:
-                    print("✅ Call was in-progress - counting as answered")
+                    print("Call was in-progress - counting as answered")
                     return True
                 
                 # Require minimum 10 seconds duration to count as answered
@@ -525,23 +697,23 @@ def check_call_status(call_sid, max_wait=40):
                     # If answered_by is available, prefer human answers
                     if answered_by:
                         if answered_by == "human":
-                            print("✅ Answered by human")
+                            print("Answered by human")
                             return True
                         elif answered_by in ["machine", "fax"]:
-                            print("❌ Call answered by machine/fax - not counting as answered")
+                            print("Call answered by machine/fax - not counting as answered")
                             return False  # Voicemail or fax, not a real answer
                     else:
                         # No answered_by info, but duration is long enough (10+ seconds)
-                        print(f"✅ Call duration {duration}s long enough - counting as answered")
+                        print(f"Call duration {duration}s long enough - counting as answered")
                         return True
                 else:
                     # Duration too short, likely voicemail or not answered
-                    print(f"❌ Call duration {duration}s too short - not counting as answered")
+                    print(f"Call duration {duration}s too short - not counting as answered")
                     return False
             
             # If call failed, busy, no-answer, or canceled, it wasn't answered
             if status in ["failed", "busy", "no-answer", "canceled"]:
-                print(f"❌ Call status: {status} - not answered")
+                print(f"Call status: {status} - not answered")
                 return False
             
             time.sleep(2)  # Check every 2 seconds
@@ -551,10 +723,10 @@ def check_call_status(call_sid, max_wait=40):
     
     # If we timeout, check if it was ever in-progress
     if was_in_progress:
-        print("⏱️ Timeout but call was in-progress - counting as answered")
+        print("Timeout but call was in-progress - counting as answered")
         return True
     
-    print("⏱️ Call status check timed out - assuming not answered")
+    print("Call status check timed out - assuming not answered")
     return False
 
 def escalate_calls():
@@ -576,7 +748,7 @@ def escalate_calls():
     user_confirmed_ok = False
     
     # First call attempt
-    print("📞 Making first call attempt...")
+    print("Making first call attempt...")
     try:
         call1 = client.calls.create(
             url=f"{NGROK_URL}/temperature-alert",
@@ -591,13 +763,13 @@ def escalate_calls():
         
         # Check if user confirmed OK (pressed 1)
         if user_confirmed_ok:
-            print("✅ User confirmed everything is OK (pressed 1). No escalation needed.")
+            print("User confirmed everything is OK (pressed 1). No escalation needed.")
             return
         
         if answered:
-            print("📞 First call was answered but no confirmation. Making second attempt...")
+            print("First call was answered but no confirmation. Making second attempt...")
         else:
-            print("❌ First call not answered. Making second attempt...")
+            print("First call not answered. Making second attempt...")
         
         # Second call attempt
         call2 = client.calls.create(
@@ -613,13 +785,13 @@ def escalate_calls():
         
         # Check if user confirmed OK (pressed 1)
         if user_confirmed_ok:
-            print("✅ User confirmed everything is OK (pressed 1). No escalation needed.")
+            print("User confirmed everything is OK (pressed 1). No escalation needed.")
             return
         
         if answered:
-            print("📞 Second call was answered but no confirmation. Escalating to emergency contact...")
+            print("Second call was answered but no confirmation. Escalating to emergency contact...")
         else:
-            print("❌ Second call not answered. Escalating to emergency contact...")
+            print("Second call not answered. Escalating to emergency contact...")
         
         # Escalate to emergency contact
         emergency_call = client.calls.create(
@@ -627,7 +799,7 @@ def escalate_calls():
             to=abus_number,
             from_=os.getenv("TWILIO_PHONE_NUMBER")
         )
-        print(f"🚨 Emergency call to {abus_number} initiated: {emergency_call.sid}")
+        print(f"Emergency call to {abus_number} initiated: {emergency_call.sid}")
         
     except Exception as e:
         print(f"Error in escalation process: {e}")
@@ -636,7 +808,7 @@ def monitor_database_temperature():
     """Continuously monitor database for new temperature readings and trigger alerts"""
     global last_processed_reading_id
     
-    print("🔍 Starting database temperature monitor (checking every 30 seconds)...")
+    print("Starting database temperature monitor (checking every 30 seconds)...")
     
     while True:
         try:
@@ -644,28 +816,31 @@ def monitor_database_temperature():
             try:
                 reading = get_latest_temperature_reading(db)
                 
-                if reading and reading.id != last_processed_reading_id:
+                if reading:
                     temperature = reading.value
                     reading_id = reading.id
                     
-                    print(f"📊 Checking latest temperature reading: {temperature}°F (ID: {reading_id})")
+                    # Always check for anomalies (uses separate tracking)
+                    check_and_alert_anomaly(reading, db)
                     
-                    # Check and alert
-                    status = check_temperature_and_alert(temperature, reading_id)
-                    
-                    if status == "alert_triggered":
-                        print(f"🚨 Alert triggered for reading {reading_id}")
-                    elif status == "warning_sent":
-                        print(f"⚠️ Warning sent for reading {reading_id}")
-                    elif status == "already_processed":
-                        print(f"⏭️  Reading {reading_id} already processed")
+                    # Check threshold-based alerts (only if not already processed)
+                    if reading_id != last_processed_reading_id:
+                        print(f"Checking latest temperature reading: {temperature}°F (ID: {reading_id})")
+                        
+                        status = check_temperature_and_alert(temperature, reading_id)
+                        
+                        if status == "alert_triggered":
+                            print(f"Alert triggered for reading {reading_id}")
+                        elif status == "warning_sent":
+                            print(f"Warning sent for reading {reading_id}")
+                        elif status == "already_processed":
+                            print(f"Reading {reading_id} already processed")
+                        else:
+                            print(f"Temperature {temperature}°F is normal")
                     else:
-                        print(f"✅ Temperature {temperature}°F is normal")
+                        print(f"Reading {reading.id} already processed for thresholds, skipping threshold check")
                 else:
-                    if reading:
-                        print(f"⏭️  Reading {reading.id} already processed, skipping...")
-                    else:
-                        print("📭 No temperature readings found in database")
+                    print("No temperature readings found in database")
                 
             finally:
                 db.close()
@@ -674,7 +849,7 @@ def monitor_database_temperature():
             time.sleep(30)
             
         except Exception as e:
-            print(f"❌ Error in database monitor: {e}")
+            print(f"Error in database monitor: {e}")
             time.sleep(30)  # Wait before retrying
 
 if __name__ == "__main__":
@@ -684,15 +859,15 @@ if __name__ == "__main__":
         exit(1)
     
     # Initialize database
-    print("🗄️  Initializing database...")
+    print("Initializing database...")
     init_db()
-    print("✅ Database initialized")
+    print("Database initialized")
     
     # Start server
-    print("🚀 Starting FastAPI server on port 8001...")
+    print("Starting FastAPI server on port 8001...")
     threading.Thread(target=lambda: uvicorn.run(app, host="0.0.0.0", port=8001), daemon=True).start()
     time.sleep(2)
-    print("✅ Server started")
+    print("Server started")
     
     # Check Twilio credentials
     if not client:
@@ -700,17 +875,18 @@ if __name__ == "__main__":
         exit(1)
     
     # Start database monitoring in background
-    print("🔍 Starting database temperature monitor...")
+    print("Starting database temperature monitor...")
     threading.Thread(target=monitor_database_temperature, daemon=True).start()
     
     print("\n" + "="*60)
-    print("✅ SafeHouse Phone Call System Running")
+    print("SafeHouse Phone Call System Running")
     print("="*60)
-    print(f"📡 Server: http://0.0.0.0:8001")
-    print(f"🌐 Web Interface: {NGROK_URL}/")
-    print(f"📊 Monitoring database every 30 seconds")
-    print(f"⚠️  Warning threshold: {WARNING_THRESHOLD}°F (SMS)")
-    print(f"🚨 Danger threshold: {TEMPERATURE_THRESHOLD}°F (Calls)")
+    print(f"Server: http://0.0.0.0:8001")
+    print(f"Web Interface: {NGROK_URL}/")
+    print(f"Monitoring database every 30 seconds")
+    print(f"Z-Score Anomaly Detection: Enabled (threshold: 2.5)")
+    print(f"Warning threshold: {WARNING_THRESHOLD}°F (SMS)")
+    print(f"Danger threshold: {TEMPERATURE_THRESHOLD}°F (Calls)")
     print("="*60 + "\n")
     
     # Keep server running
