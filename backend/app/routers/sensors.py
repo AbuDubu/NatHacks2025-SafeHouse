@@ -18,13 +18,15 @@ router = APIRouter(prefix="/sensors", tags=["sensors"])
 @router.post("/", response_model=SensorSchema, status_code=status.HTTP_201_CREATED)
 def create_sensor(sensor: SensorCreate, db: Session = Depends(get_db)):
     """Register a new sensor device"""
-    # Check if sensor with device_id already exists
-    existing = db.query(Sensor).filter(Sensor.device_id == sensor.device_id).first()
+    # Check if sensor with same device_id AND sensor_type already exists
+    # Allow multiple sensors per device_id (e.g., health-hrishi-shah can have heart_rate, glucose, etc.)
+    existing = db.query(Sensor).filter(
+        Sensor.device_id == sensor.device_id,
+        Sensor.sensor_type == sensor.sensor_type
+    ).first()
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Sensor with this device_id already exists"
-        )
+        # Return existing sensor instead of error (idempotent)
+        return existing
     
     db_sensor = Sensor(**sensor.model_dump())
     db.add(db_sensor)
@@ -140,6 +142,20 @@ def create_bulk_readings(bulk_data: SensorReadingBulkCreate, db: Session = Depen
             detail=f"No sensors found for device_id: {bulk_data.device_id}"
         )
     
+    # If user_id is provided, associate sensors with user (for health data)
+    if bulk_data.user_id:
+        # Verify user exists
+        user = db.query(User).filter(User.id == bulk_data.user_id).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User with id {bulk_data.user_id} not found"
+            )
+        # Update sensors to be associated with this user
+        for sensor in sensors:
+            if sensor.user_id is None:
+                sensor.user_id = bulk_data.user_id
+    
     # Create a map of sensor_type to sensor
     sensor_map = {s.sensor_type: s for s in sensors}
     
@@ -230,21 +246,12 @@ def _check_and_create_alerts(sensor: Sensor, value: float, db: Session):
             sensor_type=sensor.sensor_type
         )
     
-    elif sensor.sensor_type == "fall_detection" and value > 0:
-        alert = Alert(
-            user_id=user.id,
-            title="Fall Detected!",
-            message=f"Fall detected in {sensor.location or 'unknown location'}",
-            alert_level=AlertLevel.CRITICAL,
-            sensor_type=sensor.sensor_type
-        )
-    
     elif sensor.sensor_type == "co2" and value > 1000:
         alert = Alert(
             user_id=user.id,
-            title="High CO2 Level",
-            message=f"CO2 level in {sensor.location or 'unknown location'} is {value} ppm",
-            alert_level=AlertLevel.WARNING,
+            title="Carbon Monoxide Detected",
+            message=f"High carbon monoxide levels detected ({value} ppm) in {sensor.location or 'unknown location'}. Please evacuate immediately.",
+            alert_level=AlertLevel.CRITICAL,
             sensor_type=sensor.sensor_type
         )
     

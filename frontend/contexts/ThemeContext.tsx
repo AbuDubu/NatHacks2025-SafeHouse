@@ -8,6 +8,7 @@ interface ThemeContextType {
   isDark: boolean;
   themeMode: ThemeMode;
   setThemeMode: (mode: ThemeMode) => void;
+  toggleTheme: () => void;
   colors: {
     background: string;
     foreground: string;
@@ -112,10 +113,20 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const toggleTheme = async () => {
+    const newMode = isDark ? 'light' : 'dark';
+    setThemeModeState(newMode);
+    try {
+      await AsyncStorage.setItem('themeMode', newMode);
+    } catch (err) {
+      console.error('Error saving theme preference:', err);
+    }
+  };
+
   const colors = isDark ? darkColors : lightColors;
 
   return (
-    <ThemeContext.Provider value={{ isDark, themeMode, setThemeMode, colors }}>
+    <ThemeContext.Provider value={{ isDark, themeMode, setThemeMode, toggleTheme, colors }}>
       {children}
     </ThemeContext.Provider>
   );
