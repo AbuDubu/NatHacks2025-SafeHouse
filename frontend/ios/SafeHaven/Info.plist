@@ -27,7 +27,7 @@
       <dict>
         <key>CFBundleURLSchemes</key>
         <array>
-          <string>com.safehaven.app</string>
+          <string>com.nathacks2025.safehouse</string>
         </array>
       </dict>
       <dict>
@@ -48,6 +48,10 @@
       <key>NSAllowsLocalNetworking</key>
       <true/>
     </dict>
+    <key>NSHealthShareUsageDescription</key>
+    <string>This app needs access to your health data to display vital signs and health trends.</string>
+    <key>NSHealthUpdateUsageDescription</key>
+    <string>This app needs permission to update your health data.</string>
     <key>UILaunchStoryboardName</key>
     <string>SplashScreen</string>
     <key>UIRequiredDeviceCapabilities</key>

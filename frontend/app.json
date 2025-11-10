@@ -14,16 +14,26 @@
     "assetBundlePatterns": [
       "**/*"
     ],
+    "plugins": [
+      "expo-dev-client",
+      [
+        "react-native-health",
+        {
+          "healthSharePermission": "This app needs access to your health data to display vital signs and health trends.",
+          "healthUpdatePermission": "This app needs permission to update your health data."
+        }
+      ]
+    ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.safehaven.app"
+      "bundleIdentifier": "com.nathacks2025.safehouse"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.safehaven.app"
+      "package": "com.nathacks2025.safehouse"
     },
     "web": {
       "favicon": "./assets/favicon.png"

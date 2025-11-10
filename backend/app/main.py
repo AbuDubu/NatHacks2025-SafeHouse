@@ -6,7 +6,7 @@ import os
 from dotenv import load_dotenv
 
 from app.database import init_db
-from app.routers import sensors, alerts, users, dashboard, websocket
+from app.routers import sensors, alerts, users, dashboard, websocket, phone_calls
 from app.schemas import HealthCheck
 
 load_dotenv()
@@ -36,6 +36,7 @@ app.include_router(alerts.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(dashboard.router, prefix="/api")
 app.include_router(websocket.router, prefix="/api")
+app.include_router(phone_calls.router, prefix="/api")
 
 
 @app.on_event("startup")
