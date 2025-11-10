@@ -4,6 +4,8 @@ import { LineChart } from 'react-native-chart-kit';
 import { Dimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { apiClient, SensorReading, Sensor } from '../lib/api';
+import { getHeartRateData, getBloodGlucoseData, getStepCountData, getSleepData, initializeHealthKit } from '../lib/appleHealth';
+import { useTheme } from '../contexts/ThemeContext';
 
 const screenWidth = Dimensions.get('window').width;
 
@@ -17,6 +19,7 @@ interface ChartData {
 }
 
 export function GuardianTrends() {
+  const { colors, isDark } = useTheme();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [heartRateData, setHeartRateData] = useState<ChartData | null>(null);
@@ -25,7 +28,12 @@ export function GuardianTrends() {
   const [activityData, setActivityData] = useState<ChartData | null>(null);
 
   useEffect(() => {
-    loadTrendData();
+    // Initialize Apple Health on mount and wait for it
+    const initHealth = async () => {
+      await initializeHealthKit();
+      loadTrendData();
+    };
+    initHealth();
   }, []);
 
   const loadTrendData = async () => {
@@ -33,14 +41,7 @@ export function GuardianTrends() {
       setLoading(true);
       setError(null);
 
-      // Get all sensors
-      const sensors = await apiClient.getSensors();
-      
-      // Find sensors by type
-      const heartRateSensor = sensors.find(s => s.sensor_type === 'heart_rate');
-      const glucoseSensor = sensors.find(s => s.sensor_type === 'glucose' || s.sensor_type === 'co2');
-      
-      // Load readings for the past 7 days
+      // Generate labels for the past 7 days
       const daysAgo = 7;
       const now = new Date();
       const labels = [];
@@ -50,80 +51,160 @@ export function GuardianTrends() {
         labels.push(date.toLocaleDateString('en-US', { weekday: 'short' }));
       }
 
-      // Load heart rate data
-      if (heartRateSensor) {
-        try {
-          const readings = await apiClient.getSensorReadings(heartRateSensor.id, { hours: daysAgo * 24 });
-          const data = processReadingsForChart(readings, labels, daysAgo);
+      // Load heart rate data from Apple Health
+      try {
+        const heartRateHealthData = await getHeartRateData(daysAgo);
+        const dailyHeartRate = processHealthDataByDay(heartRateHealthData, daysAgo, 'heartRate');
+        
+        // Only set data if we have real data (at least some non-zero values)
+        if (dailyHeartRate.length === 7 && dailyHeartRate.some(val => val > 0)) {
           setHeartRateData({
             labels,
             datasets: [{
-              data,
+              data: dailyHeartRate,
               color: (opacity = 1) => `rgba(239, 68, 68, ${opacity})`,
               strokeWidth: 3,
             }],
           });
-        } catch (err) {
-          console.error('Error loading heart rate data:', err);
+        } else {
+          // Try to get from backend sensor data
+          const heartRateSensors = await apiClient.getSensors({ sensor_type: 'heart_rate' });
+          if (heartRateSensors.length > 0) {
+            const readings = await apiClient.getSensorReadings(heartRateSensors[0].id, { hours: daysAgo * 24 });
+            const dailyFromBackend = processReadingsForChart(readings, labels, daysAgo);
+            if (dailyFromBackend.some(val => val > 0)) {
+              setHeartRateData({
+                labels,
+                datasets: [{
+                  data: dailyFromBackend,
+                  color: (opacity = 1) => `rgba(239, 68, 68, ${opacity})`,
+                  strokeWidth: 3,
+                }],
+              });
+            }
+          }
         }
-      } else {
-        // Default data if no sensor
-        setHeartRateData({
-          labels,
-          datasets: [{
-            data: [68, 70, 72, 71, 69, 72, 70],
-            color: (opacity = 1) => `rgba(239, 68, 68, ${opacity})`,
-            strokeWidth: 3,
-          }],
-        });
+      } catch (err) {
+        console.error('Error loading heart rate data:', err);
+        // No fallback - data will remain null and chart won't show
       }
 
-      // Load glucose data
-      if (glucoseSensor) {
-        try {
-          const readings = await apiClient.getSensorReadings(glucoseSensor.id, { hours: daysAgo * 24 });
-          const data = processReadingsForChart(readings, labels, daysAgo);
+      // Load glucose data from Apple Health
+      try {
+        const glucoseHealthData = await getBloodGlucoseData(daysAgo);
+        const dailyGlucose = processHealthDataByDay(glucoseHealthData, daysAgo, 'bloodGlucose');
+        
+        // Only set data if we have real data (at least some non-zero values)
+        if (dailyGlucose.length === 7 && dailyGlucose.some(val => val > 0)) {
           setGlucoseData({
             labels,
             datasets: [{
-              data,
+              data: dailyGlucose,
               color: (opacity = 1) => `rgba(59, 130, 246, ${opacity})`,
               strokeWidth: 2,
             }],
           });
-        } catch (err) {
-          console.error('Error loading glucose data:', err);
+        } else {
+          // Try to get from backend sensor data
+          const glucoseSensors = await apiClient.getSensors({ sensor_type: 'blood_glucose' });
+          if (glucoseSensors.length > 0) {
+            const readings = await apiClient.getSensorReadings(glucoseSensors[0].id, { hours: daysAgo * 24 });
+            const dailyFromBackend = processReadingsForChart(readings, labels, daysAgo);
+            if (dailyFromBackend.some(val => val > 0)) {
+              setGlucoseData({
+                labels,
+                datasets: [{
+                  data: dailyFromBackend,
+                  color: (opacity = 1) => `rgba(59, 130, 246, ${opacity})`,
+                  strokeWidth: 2,
+                }],
+              });
+            }
+          }
         }
-      } else {
-        // Default data if no sensor
-        setGlucoseData({
-          labels,
-          datasets: [{
-            data: [95, 88, 92, 78, 68, 85, 90],
-            color: (opacity = 1) => `rgba(59, 130, 246, ${opacity})`,
-            strokeWidth: 2,
-          }],
-        });
+      } catch (err) {
+        console.error('Error loading glucose data:', err);
+        // No fallback - data will remain null and chart won't show
       }
 
-      // Sleep and activity are placeholders (would need specific sensors)
-      setSleepData({
-        labels,
-        datasets: [{
-          data: [7.5, 8.0, 7.2, 6.8, 7.5, 8.2, 7.8],
-          color: (opacity = 1) => `rgba(139, 92, 246, ${opacity})`,
-          strokeWidth: 3,
-        }],
-      });
+      // Load sleep data from Apple Health
+      try {
+        const sleepHealthData = await getSleepData(daysAgo);
+        const dailySleep = processHealthDataByDay(sleepHealthData, daysAgo, 'sleepHours');
+        
+        // Only set data if we have real data (at least some non-zero values)
+        if (dailySleep.length === 7 && dailySleep.some(val => val > 0)) {
+          setSleepData({
+            labels,
+            datasets: [{
+              data: dailySleep,
+              color: (opacity = 1) => `rgba(139, 92, 246, ${opacity})`,
+              strokeWidth: 3,
+            }],
+          });
+        } else {
+          // Try to get from backend sensor data
+          const sleepSensors = await apiClient.getSensors({ sensor_type: 'sleep' });
+          if (sleepSensors.length > 0) {
+            const readings = await apiClient.getSensorReadings(sleepSensors[0].id, { hours: daysAgo * 24 });
+            const dailyFromBackend = processReadingsForChart(readings, labels, daysAgo);
+            if (dailyFromBackend.some(val => val > 0)) {
+              setSleepData({
+                labels,
+                datasets: [{
+                  data: dailyFromBackend,
+                  color: (opacity = 1) => `rgba(139, 92, 246, ${opacity})`,
+                  strokeWidth: 3,
+                }],
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Error loading sleep data:', err);
+        // No fallback - data will remain null and chart won't show
+      }
 
-      setActivityData({
-        labels,
-        datasets: [{
-          data: [4200, 5100, 4800, 3900, 5400, 6200, 5800],
-          color: (opacity = 1) => `rgba(16, 185, 129, ${opacity})`,
-          strokeWidth: 2,
-        }],
-      });
+      // Load activity (steps) data from Apple Health
+      try {
+        const activityHealthData = await getStepCountData(daysAgo);
+        const dailyActivity = processHealthDataByDay(activityHealthData, daysAgo, 'steps');
+        
+        // Only set data if we have real data (at least some non-zero values)
+        if (dailyActivity.length === 7 && dailyActivity.some(val => val > 0)) {
+          setActivityData({
+            labels,
+            datasets: [{
+              data: dailyActivity,
+              color: (opacity = 1) => `rgba(16, 185, 129, ${opacity})`,
+              strokeWidth: 2,
+            }],
+          });
+        } else {
+          // Try to get from backend sensor data (activity or step_count)
+          const activitySensors = await apiClient.getSensors({ sensor_type: 'activity' });
+          const stepSensors = await apiClient.getSensors({ sensor_type: 'step_count' });
+          const sensorsToUse = activitySensors.length > 0 ? activitySensors : stepSensors;
+          
+          if (sensorsToUse.length > 0) {
+            const readings = await apiClient.getSensorReadings(sensorsToUse[0].id, { hours: daysAgo * 24 });
+            const dailyFromBackend = processReadingsForChart(readings, labels, daysAgo);
+            if (dailyFromBackend.some(val => val > 0)) {
+              setActivityData({
+                labels,
+                datasets: [{
+                  data: dailyFromBackend,
+                  color: (opacity = 1) => `rgba(16, 185, 129, ${opacity})`,
+                  strokeWidth: 2,
+                }],
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Error loading activity data:', err);
+        // No fallback - data will remain null and chart won't show
+      }
 
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load trend data');
@@ -131,6 +212,70 @@ export function GuardianTrends() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Process Apple Health data by day for chart display
+  const processHealthDataByDay = (
+    healthData: Array<{ date: Date; heartRate?: number; steps?: number; sleepHours?: number; bloodGlucose?: number }>,
+    days: number,
+    type: 'heartRate' | 'steps' | 'sleepHours' | 'bloodGlucose'
+  ): number[] => {
+    if (healthData.length === 0) {
+      return Array(7).fill(0);
+    }
+
+    const now = new Date();
+    const dayData: { [key: number]: number[] } = {};
+    
+    // Initialize day buckets
+    for (let i = 0; i < days; i++) {
+      dayData[i] = [];
+    }
+
+    // Group data by day
+    healthData.forEach(data => {
+      const dataDate = new Date(data.date);
+      const daysDiff = Math.floor((now.getTime() - dataDate.getTime()) / (1000 * 60 * 60 * 24));
+      if (daysDiff >= 0 && daysDiff < days) {
+        let value: number | undefined;
+        switch (type) {
+          case 'heartRate':
+            value = data.heartRate;
+            break;
+          case 'steps':
+            value = data.steps;
+            break;
+          case 'sleepHours':
+            value = data.sleepHours;
+            break;
+          case 'bloodGlucose':
+            value = data.bloodGlucose;
+            break;
+        }
+        if (value !== undefined && value > 0) {
+          dayData[daysDiff].push(value);
+        }
+      }
+    });
+
+    // Calculate average or sum for each day
+    const result: number[] = [];
+    for (let i = days - 1; i >= 0; i--) {
+      if (dayData[i].length > 0) {
+        if (type === 'steps') {
+          // Sum steps for the day
+          result.push(Math.round(dayData[i].reduce((sum, val) => sum + val, 0)));
+        } else {
+          // Average for other metrics
+          const avg = dayData[i].reduce((sum, val) => sum + val, 0) / dayData[i].length;
+          result.push(Math.round(avg * 10) / 10); // Round to 1 decimal
+        }
+      } else {
+        result.push(0);
+      }
+    }
+
+    return result;
   };
 
   const processReadingsForChart = (readings: SensorReading[], labels: string[], days: number): number[] => {
@@ -162,8 +307,8 @@ export function GuardianTrends() {
         const avg = values.reduce((sum, val) => sum + val, 0) / values.length;
         result.push(Math.round(avg * 10) / 10);
       } else {
-        // Use previous day's value or 0
-        result.push(result.length > 0 ? result[result.length - 1] : 0);
+        // No data for this day - return 0 (no fallback to previous day)
+        result.push(0);
       }
     }
 
@@ -171,62 +316,79 @@ export function GuardianTrends() {
   };
 
   const chartConfig = {
-    backgroundColor: '#ffffff',
-    backgroundGradientFrom: '#ffffff',
-    backgroundGradientTo: '#ffffff',
+    backgroundColor: isDark ? colors.card : '#ffffff',
+    backgroundGradientFrom: isDark ? colors.card : '#ffffff',
+    backgroundGradientTo: isDark ? colors.card : '#ffffff',
     decimalPlaces: 1,
-    color: (opacity = 1) => `rgba(107, 114, 128, ${opacity})`,
-    labelColor: (opacity = 1) => `rgba(107, 114, 128, ${opacity})`,
+    color: (opacity = 1) => isDark 
+      ? `rgba(148, 163, 184, ${opacity})` 
+      : `rgba(107, 114, 128, ${opacity})`,
+    labelColor: (opacity = 1) => isDark 
+      ? `rgba(241, 245, 249, ${opacity})` 
+      : `rgba(107, 114, 128, ${opacity})`,
     style: {
       borderRadius: 16,
     },
     propsForDots: {
       r: '4',
       strokeWidth: '2',
-      stroke: '#ffffff',
+      stroke: isDark ? colors.card : '#ffffff',
     },
   };
 
   if (loading) {
     return (
-      <View style={[styles.container, styles.centerContent]}>
-        <ActivityIndicator size="large" color="#2563eb" />
-        <Text style={styles.loadingText}>Loading trends...</Text>
+      <View style={[styles.container, styles.centerContent, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>Loading trends...</Text>
       </View>
     );
   }
 
   if (error) {
     return (
-      <View style={[styles.container, styles.centerContent]}>
-        <Ionicons name="alert-circle" size={48} color="#dc2626" />
-        <Text style={styles.errorText}>{error}</Text>
-        <TouchableOpacity onPress={loadTrendData} style={styles.retryButton}>
+      <View style={[styles.container, styles.centerContent, { backgroundColor: colors.background }]}>
+        <Ionicons name="alert-circle" size={48} color={colors.destructive} />
+        <Text style={[styles.errorText, { color: colors.destructive }]}>{error}</Text>
+        <TouchableOpacity onPress={loadTrendData} style={[styles.retryButton, { backgroundColor: colors.primary }]}>
           <Text style={styles.retryButtonText}>Retry</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
+  // Check if we have any data at all
+  const hasAnyData = heartRateData || glucoseData || sleepData || activityData;
+
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Trend Analytics</Text>
+    <ScrollView contentContainerStyle={[styles.container, { backgroundColor: colors.background }]}>
+      <Text style={[styles.title, { color: colors.foreground }]}>Trend Analytics</Text>
+
+      {!hasAnyData && (
+        <View style={[styles.chartCard, styles.centerContent, { backgroundColor: colors.card }]}>
+          <Ionicons name="stats-chart-outline" size={64} color={colors.mutedForeground} />
+          <Text style={[styles.noDataText, { color: colors.foreground }]}>No trend data available</Text>
+          <Text style={[styles.noDataSubtext, { color: colors.mutedForeground }]}>
+            Connect Apple Health or ensure sensors are sending data to view trends.
+          </Text>
+        </View>
+      )}
 
       {/* Heart Rate Trend */}
       {heartRateData && (
-        <View style={styles.chartCard}>
+        <View style={[styles.chartCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <View style={styles.chartHeader}>
             <View style={styles.chartTitleContainer}>
-              <View style={[styles.iconContainer, styles.redIcon]}>
+              <View style={[styles.iconContainer, { backgroundColor: isDark ? '#2e1a1a' : '#fef2f2' }]}>
                 <Ionicons name="heart" size={20} color="#dc2626" />
               </View>
               <View>
-                <Text style={styles.chartTitle}>Heart Rate</Text>
-                <Text style={styles.chartSubtitle}>7-day trend</Text>
+                <Text style={[styles.chartTitle, { color: colors.foreground }]}>Heart Rate</Text>
+                <Text style={[styles.chartSubtitle, { color: colors.mutedForeground }]}>7-day trend</Text>
               </View>
             </View>
-            <TouchableOpacity style={styles.checkInButton}>
-              <Text style={styles.checkInButtonText}>Check In</Text>
+            <TouchableOpacity style={[styles.checkInButton, { borderColor: colors.primary }]}>
+              <Text style={[styles.checkInButtonText, { color: colors.primary }]}>Check In</Text>
             </TouchableOpacity>
           </View>
           <LineChart
@@ -246,19 +408,19 @@ export function GuardianTrends() {
 
       {/* Blood Glucose Trend */}
       {glucoseData && (
-        <View style={styles.chartCard}>
+        <View style={[styles.chartCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <View style={styles.chartHeader}>
             <View style={styles.chartTitleContainer}>
-              <View style={[styles.iconContainer, styles.blueIcon]}>
-                <Ionicons name="water-outline" size={20} color="#2563eb" />
+              <View style={[styles.iconContainer, { backgroundColor: isDark ? '#1a1f2e' : '#eff6ff' }]}>
+                <Ionicons name="water-outline" size={20} color={colors.primary} />
               </View>
               <View>
-                <Text style={styles.chartTitle}>Blood Glucose</Text>
-                <Text style={styles.chartSubtitle}>7-day trend</Text>
+                <Text style={[styles.chartTitle, { color: colors.foreground }]}>Blood Glucose</Text>
+                <Text style={[styles.chartSubtitle, { color: colors.mutedForeground }]}>7-day trend</Text>
               </View>
             </View>
-            <TouchableOpacity style={styles.checkInButton}>
-              <Text style={styles.checkInButtonText}>Check In</Text>
+            <TouchableOpacity style={[styles.checkInButton, { borderColor: colors.primary }]}>
+              <Text style={[styles.checkInButtonText, { color: colors.primary }]}>Check In</Text>
             </TouchableOpacity>
           </View>
           <LineChart
@@ -277,19 +439,19 @@ export function GuardianTrends() {
 
       {/* Sleep Quality Trend */}
       {sleepData && (
-        <View style={styles.chartCard}>
+        <View style={[styles.chartCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <View style={styles.chartHeader}>
             <View style={styles.chartTitleContainer}>
-              <View style={[styles.iconContainer, styles.purpleIcon]}>
+              <View style={[styles.iconContainer, { backgroundColor: isDark ? '#2e1a2e' : '#f3e8ff' }]}>
                 <Ionicons name="moon" size={20} color="#8b5cf6" />
               </View>
               <View>
-                <Text style={styles.chartTitle}>Sleep Quality</Text>
-                <Text style={styles.chartSubtitle}>7-day trend</Text>
+                <Text style={[styles.chartTitle, { color: colors.foreground }]}>Sleep Quality</Text>
+                <Text style={[styles.chartSubtitle, { color: colors.mutedForeground }]}>7-day trend</Text>
               </View>
             </View>
-            <TouchableOpacity style={styles.checkInButton}>
-              <Text style={styles.checkInButtonText}>Check In</Text>
+            <TouchableOpacity style={[styles.checkInButton, { borderColor: colors.primary }]}>
+              <Text style={[styles.checkInButtonText, { color: colors.primary }]}>Check In</Text>
             </TouchableOpacity>
           </View>
           <LineChart
@@ -308,19 +470,19 @@ export function GuardianTrends() {
 
       {/* Activity Level Trend */}
       {activityData && (
-        <View style={styles.chartCard}>
+        <View style={[styles.chartCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <View style={styles.chartHeader}>
             <View style={styles.chartTitleContainer}>
-              <View style={[styles.iconContainer, styles.greenIcon]}>
+              <View style={[styles.iconContainer, { backgroundColor: isDark ? '#1a2e1a' : '#f0fdf4' }]}>
                 <Ionicons name="walk-outline" size={20} color="#10b981" />
               </View>
               <View>
-                <Text style={styles.chartTitle}>Activity Level</Text>
-                <Text style={styles.chartSubtitle}>7-day trend</Text>
+                <Text style={[styles.chartTitle, { color: colors.foreground }]}>Activity Level</Text>
+                <Text style={[styles.chartSubtitle, { color: colors.mutedForeground }]}>7-day trend</Text>
               </View>
             </View>
-            <TouchableOpacity style={styles.checkInButton}>
-              <Text style={styles.checkInButtonText}>Check In</Text>
+            <TouchableOpacity style={[styles.checkInButton, { borderColor: colors.primary }]}>
+              <Text style={[styles.checkInButtonText, { color: colors.primary }]}>Check In</Text>
             </TouchableOpacity>
           </View>
           <LineChart
@@ -344,7 +506,6 @@ const styles = StyleSheet.create({
   container: {
     padding: 24,
     paddingBottom: 100,
-    backgroundColor: '#f9fafb',
   },
   centerContent: {
     justifyContent: 'center',
@@ -354,12 +515,10 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 16,
-    color: '#6b7280',
     marginTop: 16,
   },
   errorText: {
     fontSize: 16,
-    color: '#dc2626',
     textAlign: 'center',
     marginTop: 16,
   },
@@ -367,7 +526,6 @@ const styles = StyleSheet.create({
     marginTop: 16,
     paddingHorizontal: 24,
     paddingVertical: 12,
-    backgroundColor: '#2563eb',
     borderRadius: 8,
   },
   retryButtonText: {
@@ -377,15 +535,12 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: 'bold',
-    color: '#111827',
     marginBottom: 24,
   },
   chartCard: {
     padding: 24,
-    backgroundColor: '#ffffff',
     borderRadius: 24,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
     marginBottom: 24,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -408,41 +563,36 @@ const styles = StyleSheet.create({
     padding: 8,
     borderRadius: 8,
   },
-  redIcon: {
-    backgroundColor: '#fee2e2',
-  },
-  blueIcon: {
-    backgroundColor: '#dbeafe',
-  },
-  purpleIcon: {
-    backgroundColor: '#f3e8ff',
-  },
-  greenIcon: {
-    backgroundColor: '#d1fae5',
-  },
   chartTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#111827',
   },
   chartSubtitle: {
     fontSize: 14,
-    color: '#6b7280',
   },
   checkInButton: {
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderWidth: 1,
-    borderColor: '#93c5fd',
     borderRadius: 8,
   },
   checkInButtonText: {
-    color: '#2563eb',
     fontWeight: '500',
     fontSize: 14,
   },
   chart: {
     marginVertical: 8,
     borderRadius: 16,
+  },
+  noDataText: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginTop: 16,
+  },
+  noDataSubtext: {
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 8,
+    paddingHorizontal: 24,
   },
 });

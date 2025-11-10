@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { useTheme } from '../contexts/ThemeContext';
 
 type UserMode = 'guardian' | 'resident' | null;
 
@@ -12,9 +13,15 @@ interface LandingScreenProps {
 }
 
 export function LandingScreen({ selectedMode, onModeSelect, onContinue }: LandingScreenProps) {
+  const { colors, isDark } = useTheme();
+  
+  const gradientColors = isDark 
+    ? ['#1e293b', '#0f172a', '#020617']
+    : ['#dbeafe', '#eff6ff', '#ffffff'];
+  
   return (
     <LinearGradient
-      colors={['#dbeafe', '#eff6ff', '#ffffff']}
+      colors={gradientColors}
       style={styles.container}
     >
       <View style={styles.content}>
@@ -23,11 +30,11 @@ export function LandingScreen({ selectedMode, onModeSelect, onContinue }: Landin
           <View style={styles.logoWrapper}>
             <Ionicons name="shield" size={80} color="#2563eb" />
             <View style={styles.heartIcon}>
-              <Ionicons name="heart" size={32} color="#f87171" />
+              <Ionicons name="heart" size={32} color="#f87171" style={styles.heartIconInner} />
             </View>
           </View>
-          <Text style={styles.title}>SafeHaven</Text>
-          <Text style={styles.subtitle}>Stay connected. Stay safe.</Text>
+          <Text style={[styles.title, { color: isDark ? colors.foreground : '#1e3a8a' }]}>SafeHaven</Text>
+          <Text style={[styles.subtitle, { color: isDark ? colors.mutedForeground : '#1e40af' }]}>Stay connected. Stay safe.</Text>
         </View>
 
         {/* Mode Selection Cards */}
@@ -37,26 +44,28 @@ export function LandingScreen({ selectedMode, onModeSelect, onContinue }: Landin
             onPress={() => onModeSelect('guardian')}
             style={[
               styles.card,
-              selectedMode === 'guardian' && styles.cardSelected
+              { backgroundColor: isDark ? colors.card : '#ffffff' },
+              selectedMode === 'guardian' && [styles.cardSelected, { backgroundColor: colors.primary }]
             ]}
           >
             <View style={styles.cardContent}>
               <View style={[
                 styles.iconContainer,
+                { backgroundColor: selectedMode === 'guardian' ? 'rgba(255, 255, 255, 0.2)' : (isDark ? colors.muted : '#dbeafe') },
                 selectedMode === 'guardian' && styles.iconContainerSelected
               ]}>
-                <Ionicons name="hand-left" size={32} color={selectedMode === 'guardian' ? '#ffffff' : '#2563eb'} />
+                <Ionicons name="hand-left" size={32} color={selectedMode === 'guardian' ? '#ffffff' : colors.primary} />
               </View>
               <View style={styles.cardTextContainer}>
                 <Text style={[
                   styles.cardTitle,
-                  selectedMode === 'guardian' && styles.cardTitleSelected
+                  { color: selectedMode === 'guardian' ? '#ffffff' : (isDark ? colors.foreground : '#374151') }
                 ]}>
                   I'm a Guardian
                 </Text>
                 <Text style={[
                   styles.cardSubtitle,
-                  selectedMode === 'guardian' && styles.cardSubtitleSelected
+                  { color: selectedMode === 'guardian' ? 'rgba(255, 255, 255, 0.8)' : (isDark ? colors.mutedForeground : '#6b7280') }
                 ]}>
                   Monitor and care for loved ones
                 </Text>
@@ -69,26 +78,28 @@ export function LandingScreen({ selectedMode, onModeSelect, onContinue }: Landin
             onPress={() => onModeSelect('resident')}
             style={[
               styles.card,
-              selectedMode === 'resident' && styles.cardSelected
+              { backgroundColor: isDark ? colors.card : '#ffffff' },
+              selectedMode === 'resident' && [styles.cardSelected, { backgroundColor: colors.primary }]
             ]}
           >
             <View style={styles.cardContent}>
               <View style={[
                 styles.iconContainer,
+                { backgroundColor: selectedMode === 'resident' ? 'rgba(255, 255, 255, 0.2)' : (isDark ? colors.muted : '#dbeafe') },
                 selectedMode === 'resident' && styles.iconContainerSelected
               ]}>
-                <Ionicons name="person" size={32} color={selectedMode === 'resident' ? '#ffffff' : '#2563eb'} />
+                <Ionicons name="person" size={32} color={selectedMode === 'resident' ? '#ffffff' : colors.primary} />
               </View>
               <View style={styles.cardTextContainer}>
                 <Text style={[
                   styles.cardTitle,
-                  selectedMode === 'resident' && styles.cardTitleSelected
+                  { color: selectedMode === 'resident' ? '#ffffff' : (isDark ? colors.foreground : '#374151') }
                 ]}>
                   I'm a Resident
                 </Text>
                 <Text style={[
                   styles.cardSubtitle,
-                  selectedMode === 'resident' && styles.cardSubtitleSelected
+                  { color: selectedMode === 'resident' ? 'rgba(255, 255, 255, 0.8)' : (isDark ? colors.mutedForeground : '#6b7280') }
                 ]}>
                   Stay safe and connected
                 </Text>
@@ -101,7 +112,7 @@ export function LandingScreen({ selectedMode, onModeSelect, onContinue }: Landin
         {selectedMode && (
           <TouchableOpacity
             onPress={onContinue}
-            style={styles.continueButton}
+            style={[styles.continueButton, { backgroundColor: colors.primary }]}
           >
             <Text style={styles.continueButtonText}>Continue</Text>
           </TouchableOpacity>
@@ -110,11 +121,11 @@ export function LandingScreen({ selectedMode, onModeSelect, onContinue }: Landin
         {/* Footer Links */}
         <View style={styles.footer}>
           <TouchableOpacity>
-            <Text style={styles.footerLink}>Privacy Policy</Text>
+            <Text style={[styles.footerLink, { color: colors.primary }]}>Privacy Policy</Text>
           </TouchableOpacity>
-          <Text style={styles.footerSeparator}>•</Text>
+          <Text style={[styles.footerSeparator, { color: isDark ? colors.mutedForeground : '#93c5fd' }]}>•</Text>
           <TouchableOpacity>
-            <Text style={styles.footerLink}>Terms of Service</Text>
+            <Text style={[styles.footerLink, { color: colors.primary }]}>Terms of Service</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -139,24 +150,29 @@ const styles = StyleSheet.create({
   logoWrapper: {
     position: 'relative',
     marginBottom: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   heartIcon: {
     position: 'absolute',
-    top: '50%',
-    left: '50%',
-    transform: [{ translateX: -16 }, { translateY: -16 }],
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heartIconInner: {
+    textAlign: 'center',
   },
   title: {
     fontSize: 32,
     fontWeight: 'bold',
-    color: '#1e3a8a',
     marginBottom: 8,
     textAlign: 'center',
   },
   subtitle: {
     fontSize: 16,
-    color: '#1e40af',
-    opacity: 0.8,
     textAlign: 'center',
   },
   cardsContainer: {
@@ -169,7 +185,6 @@ const styles = StyleSheet.create({
     width: '100%',
     padding: 24,
     borderRadius: 24,
-    backgroundColor: '#ffffff',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
@@ -177,7 +192,6 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   cardSelected: {
-    backgroundColor: '#2563eb',
     borderWidth: 4,
     borderColor: '#93c5fd',
   },
@@ -189,7 +203,6 @@ const styles = StyleSheet.create({
   iconContainer: {
     padding: 16,
     borderRadius: 999,
-    backgroundColor: '#dbeafe',
   },
   iconContainerSelected: {
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
@@ -200,25 +213,16 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#374151',
     marginBottom: 4,
-  },
-  cardTitleSelected: {
-    color: '#ffffff',
   },
   cardSubtitle: {
     fontSize: 14,
-    color: '#6b7280',
-  },
-  cardSubtitleSelected: {
-    color: 'rgba(255, 255, 255, 0.8)',
   },
   continueButton: {
     width: '100%',
     maxWidth: 400,
     height: 56,
     borderRadius: 28,
-    backgroundColor: '#2563eb',
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#000',
@@ -240,10 +244,8 @@ const styles = StyleSheet.create({
   },
   footerLink: {
     fontSize: 14,
-    color: '#2563eb',
   },
   footerSeparator: {
     fontSize: 14,
-    color: '#93c5fd',
   },
 });
